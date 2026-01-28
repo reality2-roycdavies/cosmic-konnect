@@ -97,8 +97,10 @@ pub enum CkpServiceEvent {
 /// Commands to send to the CKP service
 #[derive(Debug)]
 pub enum CkpServiceCommand {
-    /// Connect to a discovered device
+    /// Connect to a discovered device by ID
     Connect { device_id: String },
+    /// Connect directly to an address (for unified discovery)
+    ConnectByAddress { address: std::net::SocketAddr },
     /// Disconnect from a device
     Disconnect { device_id: String },
     /// Request pairing with a device
@@ -564,6 +566,12 @@ impl CkpService {
                                     error!("Failed to connect to {}: {}", device_id, e);
                                 }
                             }
+                        }
+                    }
+                    CkpServiceCommand::ConnectByAddress { address } => {
+                        info!("Connecting to address: {}", address);
+                        if let Err(e) = connections.connect(address).await {
+                            error!("Failed to connect to {}: {}", address, e);
                         }
                     }
                     CkpServiceCommand::Disconnect { device_id } => {

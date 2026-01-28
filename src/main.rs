@@ -42,6 +42,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 use tray::{TrayCommand, TrayDevice};
+use unified_discovery::{UnifiedDiscoveryConfig, UnifiedDiscoveryEvent, UnifiedDiscoveryManager};
 use zbus::connection::Builder as ConnectionBuilder;
 
 /// Check if running inside a Flatpak sandbox
@@ -398,6 +399,38 @@ fn run_ckp_tray_mode(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
 
         info!("CKP service started on port {}", ckp::TCP_PORT);
 
+        // Start unified discovery (BLE + Wi-Fi Direct)
+        let unified_config = UnifiedDiscoveryConfig {
+            enable_udp: false, // CKP service handles its own UDP discovery
+            enable_ble: true,
+            enable_ble_advertise: true,
+            enable_wifi_direct: true, // Try WiFi Direct for P2P connections
+            device_id: stored_identity.device_id.clone(),
+            device_name: stored_identity.device_name.clone(),
+            device_type: "desktop".to_string(),
+            tcp_port: ckp::TCP_PORT,
+            ..Default::default()
+        };
+
+        // Create an identity for unified discovery (for UDP if enabled)
+        let unified_identity = protocol::IdentityPacketBody {
+            device_id: stored_identity.device_id.clone(),
+            device_name: stored_identity.device_name.clone(),
+            device_type: protocol::DeviceType::Desktop,
+            protocol_version: 7,
+            incoming_capabilities: vec![],
+            outgoing_capabilities: vec![],
+            tcp_port: Some(ckp::TCP_PORT),
+        };
+
+        let unified_discovery = UnifiedDiscoveryManager::new(unified_identity, unified_config);
+        let mut unified_events = unified_discovery.subscribe();
+
+        match unified_discovery.start().await {
+            Ok(()) => info!("Unified discovery started (BLE scanning + advertising)"),
+            Err(e) => warn!("Failed to start unified discovery: {}", e),
+        }
+
         // Download directory for received files
         let download_dir = dirs::download_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
 
@@ -646,6 +679,45 @@ fn run_ckp_tray_mode(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
                             if let Err(e) = clipboard::set_clipboard(&text) {
                                 warn!("Failed to set clipboard: {}", e);
                             }
+                        }
+                    }
+                }
+
+                // Unified discovery events (BLE, Wi-Fi Direct)
+                Ok(event) = unified_events.recv() => {
+                    match event {
+                        UnifiedDiscoveryEvent::DeviceDiscovered(device) => {
+                            info!(
+                                "Unified discovery: {} ({}) via {:?}",
+                                device.device_name, device.device_id, device.discovery_method
+                            );
+                            // Add to tray
+                            tray_handle.add_device(TrayDevice {
+                                id: device.device_id.clone(),
+                                name: device.device_name,
+                                device_type: device.device_type,
+                                battery: None,
+                            });
+
+                            // If we have IP addresses, try to connect via CKP
+                            if let Some(ip) = device.ip_addresses.first() {
+                                let addr = std::net::SocketAddr::new(*ip, device.tcp_port);
+                                info!("Attempting connection to {} at {}", device.device_id, addr);
+                                let _ = command_tx.send(ckp::CkpServiceCommand::ConnectByAddress {
+                                    address: addr,
+                                }).await;
+                            }
+                        }
+                        UnifiedDiscoveryEvent::DeviceLost(device_id) => {
+                            info!("Unified discovery lost: {}", device_id);
+                            tray_handle.remove_device(&device_id);
+                        }
+                        UnifiedDiscoveryEvent::ConnectionAvailable { device_id, ip_address, tcp_port } => {
+                            info!("Connection available for {}: {}:{}", device_id, ip_address, tcp_port);
+                            let addr = std::net::SocketAddr::new(ip_address, tcp_port);
+                            let _ = command_tx.send(ckp::CkpServiceCommand::ConnectByAddress {
+                                address: addr,
+                            }).await;
                         }
                     }
                 }

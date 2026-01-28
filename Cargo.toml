@@ -77,6 +77,7 @@ zbus = "5"
 # BLE support via BlueZ
 bluer = { version = "0.17", features = ["bluetoothd"] }
 tokio-stream = "0.1"
+futures-util = "0.3"
 
 [dev-dependencies]
 tokio-test = "0.4"

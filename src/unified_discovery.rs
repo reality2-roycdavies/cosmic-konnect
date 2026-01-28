@@ -6,10 +6,10 @@
 //! - BLE scanning (discovers nearby devices via Bluetooth)
 //! - Wi-Fi Direct/P2P (creates direct connections)
 
-use crate::ble::{BleDiscoveredDevice, BleEvent, BleScanner};
+use crate::ble::{BleAdvertiser, BleAdvertiserEvent, BleDeviceIdentity, BleEvent, BleScanner};
 use crate::discovery::{DiscoveryConfig, DiscoveryEvent, DiscoveryService};
 use crate::protocol::IdentityPacketBody;
-use crate::wifidirect::{P2pDevice, P2pEvent, WifiDirectManager};
+use crate::wifidirect::{P2pEvent, WifiDirectManager};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -62,14 +62,24 @@ pub enum UnifiedDiscoveryEvent {
 pub struct UnifiedDiscoveryConfig {
     /// Enable UDP broadcast discovery
     pub enable_udp: bool,
-    /// Enable BLE discovery
+    /// Enable BLE discovery (scanning)
     pub enable_ble: bool,
+    /// Enable BLE advertising (so others can discover us)
+    pub enable_ble_advertise: bool,
     /// Enable Wi-Fi Direct discovery
     pub enable_wifi_direct: bool,
     /// Wi-Fi interface for P2P (e.g., "wlan0")
     pub wifi_interface: String,
     /// Device timeout for considering a device lost
     pub device_timeout: Duration,
+    /// Our device identity for advertising
+    pub device_id: String,
+    /// Our device name for advertising
+    pub device_name: String,
+    /// Our device type for advertising
+    pub device_type: String,
+    /// TCP port for connections
+    pub tcp_port: u16,
 }
 
 impl Default for UnifiedDiscoveryConfig {
@@ -77,9 +87,14 @@ impl Default for UnifiedDiscoveryConfig {
         Self {
             enable_udp: true,
             enable_ble: true,
+            enable_ble_advertise: true,
             enable_wifi_direct: false, // Disabled by default as it requires setup
             wifi_interface: "wlan0".to_string(),
             device_timeout: Duration::from_secs(60),
+            device_id: String::new(),
+            device_name: String::new(),
+            device_type: "desktop".to_string(),
+            tcp_port: 17161, // CKP default port
         }
     }
 }
@@ -90,6 +105,8 @@ pub struct UnifiedDiscoveryManager {
     identity: IdentityPacketBody,
     devices: Arc<RwLock<HashMap<String, UnifiedDevice>>>,
     event_tx: broadcast::Sender<UnifiedDiscoveryEvent>,
+    /// Keep BLE advertiser alive to maintain advertising
+    ble_advertiser: Arc<RwLock<Option<BleAdvertiser>>>,
 }
 
 impl UnifiedDiscoveryManager {
@@ -102,6 +119,7 @@ impl UnifiedDiscoveryManager {
             identity,
             devices: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
+            ble_advertiser: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -191,13 +209,61 @@ impl UnifiedDiscoveryManager {
     async fn start_ble_discovery(&self) -> Result<(), UnifiedDiscoveryError> {
         info!("Starting BLE discovery");
 
+        // Start BLE scanner
         let scanner = BleScanner::new();
         let mut ble_events = scanner.subscribe();
 
         scanner
             .start_scan()
             .await
-            .map_err(|e| UnifiedDiscoveryError::Ble(format!("Failed to start BLE: {}", e)))?;
+            .map_err(|e| UnifiedDiscoveryError::Ble(format!("Failed to start BLE scanner: {}", e)))?;
+
+        // Start BLE advertiser if enabled and we have device identity
+        if self.config.enable_ble_advertise && !self.config.device_id.is_empty() {
+            let ble_identity = BleDeviceIdentity {
+                device_id: self.config.device_id.clone(),
+                device_name: self.config.device_name.clone(),
+                device_type: self.config.device_type.clone(),
+                tcp_port: self.config.tcp_port,
+                protocol_version: 1, // CKP version 1
+            };
+
+            let mut advertiser = BleAdvertiser::new(ble_identity);
+            let mut adv_events = advertiser.subscribe();
+
+            match advertiser.start().await {
+                Ok(()) => {
+                    info!("BLE advertising started");
+
+                    // Store advertiser to keep it alive (prevents stop signal from being sent)
+                    *self.ble_advertiser.write().await = Some(advertiser);
+
+                    // Handle advertiser events in background
+                    tokio::spawn(async move {
+                        while let Ok(event) = adv_events.recv().await {
+                            match event {
+                                BleAdvertiserEvent::ConnectionRequested {
+                                    requester_id,
+                                    requester_name,
+                                } => {
+                                    info!(
+                                        "BLE connection request from: {} ({})",
+                                        requester_name, requester_id
+                                    );
+                                }
+                                BleAdvertiserEvent::Error(e) => {
+                                    warn!("BLE advertiser error: {}", e);
+                                }
+                                _ => {}
+                            }
+                        }
+                    });
+                }
+                Err(e) => {
+                    warn!("Failed to start BLE advertising: {}", e);
+                }
+            }
+        }
 
         let devices = self.devices.clone();
         let event_tx = self.event_tx.clone();

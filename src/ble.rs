@@ -1,19 +1,22 @@
 #![allow(dead_code)]
-//! BLE discovery for Cosmic Konnect
+//! BLE discovery and advertising for Cosmic Konnect
 //!
 //! Uses BlueZ via D-Bus (bluer crate) to:
 //! - Scan for other Cosmic Konnect devices
 //! - Read device info from GATT characteristics
-//!
-//! Note: GATT server (advertising) is handled separately as it requires
-//! more complex setup with BlueZ.
+//! - Advertise as a GATT server so other devices can discover us
 
+use bluer::adv::Advertisement;
+use bluer::gatt::local::{
+    Application, Characteristic, CharacteristicRead, CharacteristicWrite,
+    CharacteristicWriteMethod, Service,
+};
 use bluer::{Adapter, AdapterEvent, Address, Device};
-use tokio_stream::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -356,6 +359,356 @@ pub enum BleError {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("GATT server error: {0}")]
+    GattServer(String),
+}
+
+/// Device identity for BLE advertising
+#[derive(Debug, Clone)]
+pub struct BleDeviceIdentity {
+    pub device_id: String,
+    pub device_name: String,
+    pub device_type: String,
+    pub tcp_port: u16,
+    pub protocol_version: u8,
+}
+
+/// Events from BLE advertiser
+#[derive(Debug, Clone)]
+pub enum BleAdvertiserEvent {
+    /// Advertising started
+    Started,
+    /// Advertising stopped
+    Stopped,
+    /// A device connected and requested connection info
+    ConnectionRequested {
+        requester_id: String,
+        requester_name: String,
+    },
+    /// Error occurred
+    Error(String),
+}
+
+/// BLE GATT server for advertising Cosmic Konnect presence
+pub struct BleAdvertiser {
+    identity: BleDeviceIdentity,
+    event_tx: broadcast::Sender<BleAdvertiserEvent>,
+    stop_tx: Option<mpsc::Sender<()>>,
+}
+
+impl BleAdvertiser {
+    /// Create a new BLE advertiser
+    pub fn new(identity: BleDeviceIdentity) -> Self {
+        let (event_tx, _) = broadcast::channel(64);
+
+        Self {
+            identity,
+            event_tx,
+            stop_tx: None,
+        }
+    }
+
+    /// Subscribe to advertiser events
+    pub fn subscribe(&self) -> broadcast::Receiver<BleAdvertiserEvent> {
+        self.event_tx.subscribe()
+    }
+
+    /// Get current IP addresses from network interfaces
+    fn get_ip_addresses() -> Vec<String> {
+        let mut addresses = Vec::new();
+
+        for iface in pnet_datalink::interfaces() {
+            // Skip loopback and down interfaces
+            if iface.is_loopback() || !iface.is_up() {
+                continue;
+            }
+
+            for ip in iface.ips {
+                match ip.ip() {
+                    std::net::IpAddr::V4(addr) => {
+                        // Skip link-local
+                        if !addr.is_loopback() && !addr.is_link_local() {
+                            addresses.push(addr.to_string());
+                        }
+                    }
+                    std::net::IpAddr::V6(addr) => {
+                        // Only include global unicast IPv6
+                        if !addr.is_loopback() {
+                            let segments = addr.segments();
+                            // Skip link-local (fe80::)
+                            if segments[0] != 0xfe80 {
+                                addresses.push(addr.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        addresses
+    }
+
+    /// Start advertising
+    pub async fn start(&mut self) -> Result<(), BleError> {
+        let session = bluer::Session::new().await?;
+        let adapter = session.default_adapter().await?;
+
+        info!(
+            "BLE advertiser using adapter: {} ({})",
+            adapter.name(),
+            adapter.address().await?
+        );
+
+        // Ensure adapter is powered on
+        if !adapter.is_powered().await? {
+            info!("Powering on BLE adapter...");
+            adapter.set_powered(true).await?;
+        }
+
+        let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
+        self.stop_tx = Some(stop_tx);
+
+        let identity = self.identity.clone();
+        let event_tx = self.event_tx.clone();
+
+        tokio::spawn(async move {
+            if let Err(e) = run_gatt_server(&adapter, identity, &event_tx, &mut stop_rx).await {
+                error!("GATT server error: {}", e);
+                let _ = event_tx.send(BleAdvertiserEvent::Error(e.to_string()));
+            }
+            let _ = event_tx.send(BleAdvertiserEvent::Stopped);
+        });
+
+        Ok(())
+    }
+
+    /// Stop advertising
+    pub async fn stop(&mut self) {
+        if let Some(tx) = self.stop_tx.take() {
+            let _ = tx.send(()).await;
+        }
+    }
+}
+
+/// Run the GATT server and advertise
+async fn run_gatt_server(
+    adapter: &Adapter,
+    identity: BleDeviceIdentity,
+    event_tx: &broadcast::Sender<BleAdvertiserEvent>,
+    stop_rx: &mut mpsc::Receiver<()>,
+) -> Result<(), BleError> {
+    info!("Starting BLE GATT server...");
+
+    // Create characteristic value storage
+    let device_id = Arc::new(RwLock::new(identity.device_id.clone()));
+    let device_name = Arc::new(RwLock::new(identity.device_name.clone()));
+    let device_type = Arc::new(RwLock::new(identity.device_type.clone()));
+    let ip_addresses = Arc::new(RwLock::new(BleAdvertiser::get_ip_addresses().join(",")));
+    let tcp_port = Arc::new(RwLock::new(identity.tcp_port.to_string()));
+    let protocol_version = Arc::new(RwLock::new(identity.protocol_version.to_string()));
+
+    // Create read handlers for each characteristic
+    let device_id_read = device_id.clone();
+    let device_name_read = device_name.clone();
+    let device_type_read = device_type.clone();
+    let tcp_port_read = tcp_port.clone();
+    let protocol_version_read = protocol_version.clone();
+
+    let event_tx_write = event_tx.clone();
+
+    // Build characteristics
+    let char_device_id = Characteristic {
+        uuid: CHAR_DEVICE_ID,
+        read: Some(CharacteristicRead {
+            read: true,
+            fun: Box::new(move |_req| {
+                let value = device_id_read.clone();
+                Box::pin(async move {
+                    let data = value.read().await;
+                    Ok(data.as_bytes().to_vec())
+                })
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let char_device_name = Characteristic {
+        uuid: CHAR_DEVICE_NAME,
+        read: Some(CharacteristicRead {
+            read: true,
+            fun: Box::new(move |_req| {
+                let value = device_name_read.clone();
+                Box::pin(async move {
+                    let data = value.read().await;
+                    Ok(data.as_bytes().to_vec())
+                })
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let char_device_type = Characteristic {
+        uuid: CHAR_DEVICE_TYPE,
+        read: Some(CharacteristicRead {
+            read: true,
+            fun: Box::new(move |_req| {
+                let value = device_type_read.clone();
+                Box::pin(async move {
+                    let data = value.read().await;
+                    Ok(data.as_bytes().to_vec())
+                })
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    // IP address characteristic with dynamic updates
+    let ip_addr_for_read = ip_addresses.clone();
+    let char_ip_address = Characteristic {
+        uuid: CHAR_IP_ADDRESS,
+        read: Some(CharacteristicRead {
+            read: true,
+            fun: Box::new(move |_req| {
+                let value = ip_addr_for_read.clone();
+                Box::pin(async move {
+                    // Refresh IP addresses on each read
+                    let fresh_ips = BleAdvertiser::get_ip_addresses().join(",");
+                    *value.write().await = fresh_ips.clone();
+                    Ok(fresh_ips.as_bytes().to_vec())
+                })
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let char_tcp_port = Characteristic {
+        uuid: CHAR_TCP_PORT,
+        read: Some(CharacteristicRead {
+            read: true,
+            fun: Box::new(move |_req| {
+                let value = tcp_port_read.clone();
+                Box::pin(async move {
+                    let data = value.read().await;
+                    Ok(data.as_bytes().to_vec())
+                })
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let char_protocol_version = Characteristic {
+        uuid: CHAR_PROTOCOL_VERSION,
+        read: Some(CharacteristicRead {
+            read: true,
+            fun: Box::new(move |_req| {
+                let value = protocol_version_read.clone();
+                Box::pin(async move {
+                    let data = value.read().await;
+                    Ok(data.as_bytes().to_vec())
+                })
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    // Connection request characteristic (write-only)
+    let char_connection_request = Characteristic {
+        uuid: CHAR_CONNECTION_REQUEST,
+        write: Some(CharacteristicWrite {
+            write: true,
+            method: CharacteristicWriteMethod::Fun(Box::new(move |data, _req| {
+                let event_tx = event_tx_write.clone();
+                Box::pin(async move {
+                    // Parse the connection request JSON
+                    if let Ok(json_str) = String::from_utf8(data) {
+                        debug!("Connection request received: {}", json_str);
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                            let requester_id = json["device_id"]
+                                .as_str()
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let requester_name = json["device_name"]
+                                .as_str()
+                                .unwrap_or("Unknown Device")
+                                .to_string();
+
+                            info!("BLE connection request from: {} ({})", requester_name, requester_id);
+                            let _ = event_tx.send(BleAdvertiserEvent::ConnectionRequested {
+                                requester_id,
+                                requester_name,
+                            });
+                        }
+                    }
+                    Ok(())
+                })
+            })),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    // Build the service
+    let service = Service {
+        uuid: GATT_SERVICE_UUID,
+        primary: true,
+        characteristics: vec![
+            char_device_id,
+            char_device_name,
+            char_device_type,
+            char_ip_address,
+            char_tcp_port,
+            char_protocol_version,
+            char_connection_request,
+        ],
+        ..Default::default()
+    };
+
+    // Register the application
+    let app = Application {
+        services: vec![service],
+        ..Default::default()
+    };
+
+    let app_handle = adapter.serve_gatt_application(app).await?;
+    info!("GATT application registered");
+
+    // Create advertisement
+    let advertise_name = format!("CK-{}", identity.device_name);
+    // Truncate if too long (BLE has limits)
+    let advertise_name = if advertise_name.len() > 20 {
+        advertise_name[..20].to_string()
+    } else {
+        advertise_name
+    };
+
+    let le_advertisement = Advertisement {
+        advertisement_type: bluer::adv::Type::Peripheral,
+        service_uuids: vec![GATT_SERVICE_UUID].into_iter().collect(),
+        local_name: Some(advertise_name.clone()),
+        discoverable: Some(true),
+        ..Default::default()
+    };
+
+    let adv_handle = adapter.advertise(le_advertisement).await?;
+    info!("BLE advertising as: {}", advertise_name);
+
+    let _ = event_tx.send(BleAdvertiserEvent::Started);
+
+    // Wait for stop signal
+    stop_rx.recv().await;
+
+    info!("Stopping BLE advertising...");
+    drop(adv_handle);
+    drop(app_handle);
+
+    Ok(())
 }
 
 #[cfg(test)]
