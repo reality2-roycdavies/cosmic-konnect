@@ -158,6 +158,25 @@ Cosmic Konnect uses its own lightweight protocol (CKP - Cosmic Konnect Protocol)
 - X25519 key exchange for secure pairing
 - ChaCha20-Poly1305 encryption for messages
 
+See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the full protocol specification.
+
+## Educational Documentation
+
+This project was developed as an educational resource demonstrating cross-platform application development. The [docs/development-logs](docs/development-logs) directory contains:
+
+- [Thematic Analysis](docs/development-logs/THEMATIC_ANALYSIS.md) - In-depth analysis of the development process covering:
+  - Protocol design decisions
+  - Cross-platform architecture patterns
+  - Android development (services, Compose, receivers)
+  - Rust async patterns (Tokio, channels)
+  - Encryption and security implementation
+  - Debugging techniques
+
+This is part of a series of educational COSMIC desktop projects:
+- [cosmic-runkat](https://github.com/reality2-roycdavies/cosmic-runkat) - COSMIC applet development
+- [cosmic-bing-wallpaper](https://github.com/reality2-roycdavies/cosmic-bing-wallpaper) - Background service development
+- [cosmic-pie-menu](https://github.com/reality2-roycdavies/cosmic-pie-menu) - Custom UI development
+
 ## License
 
 MIT License - see LICENSE file for details.
