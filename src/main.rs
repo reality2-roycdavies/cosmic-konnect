@@ -12,7 +12,7 @@
 //! - `--list` or `-l`: List discovered devices and exit
 
 mod app;
-mod ble;
+mod ble;  // WIP: BLE discovery
 mod ckp;  // Cosmic Konnect Protocol (new simplified protocol)
 mod clipboard;
 mod connection;
@@ -25,8 +25,8 @@ mod notifications;
 mod protocol;
 mod service;
 mod tray;
-mod unified_discovery;
-mod wifidirect;
+mod unified_discovery;  // WIP: Unified discovery manager
+mod wifidirect;  // WIP: Wi-Fi Direct support
 
 use connection::{ConnectionEvent, ConnectionService};
 use discovery::{DiscoveryConfig, DiscoveryEvent, DiscoveryService};

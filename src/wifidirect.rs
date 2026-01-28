@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Wi-Fi Direct (P2P) support for Linux
 //!
 //! Uses wpa_supplicant's D-Bus interface for P2P operations.

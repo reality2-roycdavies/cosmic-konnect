@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! BLE discovery for Cosmic Konnect
 //!
 //! Uses BlueZ via D-Bus (bluer crate) to:

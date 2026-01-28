@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Unified Discovery Manager for Cosmic Konnect
 //!
 //! Coordinates multiple discovery mechanisms:
