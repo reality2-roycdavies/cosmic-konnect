@@ -211,6 +211,88 @@ fn cleanup_single_lockfile(lockfile: &std::path::Path, name: &str) {
     }
 }
 
+/// WiFi hotspot name for Cosmic Konnect
+const HOTSPOT_SSID: &str = "CosmicKonnect";
+/// WiFi hotspot password
+const HOTSPOT_PASSWORD: &str = "cosmickonnect";
+/// NetworkManager connection name for the hotspot
+const HOTSPOT_CON_NAME: &str = "CosmicKonnect-Hotspot";
+
+/// Start a WiFi hotspot for direct device connections
+/// This allows phones to connect even when on isolated networks
+fn start_wifi_hotspot() -> Result<String, String> {
+    // First, check if hotspot is already active
+    let status = Command::new("nmcli")
+        .args(["connection", "show", "--active"])
+        .output()
+        .map_err(|e| format!("Failed to check connections: {}", e))?;
+
+    let output = String::from_utf8_lossy(&status.stdout);
+    if output.contains(HOTSPOT_CON_NAME) || output.contains("Hotspot") {
+        info!("WiFi hotspot already active");
+        return Ok("already_active".to_string());
+    }
+
+    // Find a suitable WiFi interface for the hotspot
+    // Prefer a secondary adapter if available
+    let interfaces = Command::new("nmcli")
+        .args(["device", "status"])
+        .output()
+        .map_err(|e| format!("Failed to list devices: {}", e))?;
+
+    let iface_output = String::from_utf8_lossy(&interfaces.stdout);
+    let mut hotspot_iface: Option<String> = None;
+    let mut primary_wifi: Option<String> = None;
+
+    for line in iface_output.lines().skip(1) {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 && parts[1] == "wifi" {
+            let iface = parts[0].to_string();
+            if parts[2] == "disconnected" {
+                // Prefer disconnected interface for hotspot
+                hotspot_iface = Some(iface);
+                break;
+            } else if primary_wifi.is_none() {
+                primary_wifi = Some(iface);
+            }
+        }
+    }
+
+    // Use disconnected interface, or fall back to primary
+    let iface = hotspot_iface.or(primary_wifi)
+        .ok_or_else(|| "No WiFi interface available for hotspot".to_string())?;
+
+    info!("Starting WiFi hotspot on interface: {}", iface);
+
+    // Create the hotspot
+    let result = Command::new("nmcli")
+        .args([
+            "device", "wifi", "hotspot",
+            "ifname", &iface,
+            "con-name", HOTSPOT_CON_NAME,
+            "ssid", HOTSPOT_SSID,
+            "password", HOTSPOT_PASSWORD,
+        ])
+        .output()
+        .map_err(|e| format!("Failed to create hotspot: {}", e))?;
+
+    if result.status.success() {
+        info!("WiFi hotspot '{}' started on {}", HOTSPOT_SSID, iface);
+        Ok(iface)
+    } else {
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        Err(format!("Failed to start hotspot: {}", stderr))
+    }
+}
+
+/// Stop the WiFi hotspot
+fn stop_wifi_hotspot() {
+    let _ = Command::new("nmcli")
+        .args(["connection", "down", HOTSPOT_CON_NAME])
+        .output();
+    info!("WiFi hotspot stopped");
+}
+
 /// Ensure autostart entry exists for the tray
 fn ensure_autostart() {
     let autostart_dir = if is_flatpak() {
@@ -399,6 +481,18 @@ fn run_ckp_tray_mode(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
 
         info!("CKP service started on port {}", ckp::TCP_PORT);
 
+        // Start WiFi hotspot for direct device connections
+        let hotspot_active = match start_wifi_hotspot() {
+            Ok(iface) => {
+                info!("WiFi hotspot ready - SSID: {}, Password: {}", HOTSPOT_SSID, HOTSPOT_PASSWORD);
+                true
+            }
+            Err(e) => {
+                warn!("Could not start WiFi hotspot: {}", e);
+                false
+            }
+        };
+
         // Start unified discovery (BLE + Wi-Fi Direct)
         let unified_config = UnifiedDiscoveryConfig {
             enable_udp: false, // CKP service handles its own UDP discovery
@@ -409,6 +503,9 @@ fn run_ckp_tray_mode(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
             device_name: stored_identity.device_name.clone(),
             device_type: "desktop".to_string(),
             tcp_port: ckp::TCP_PORT,
+            // Share hotspot credentials via BLE so phones can auto-connect
+            hotspot_ssid: if hotspot_active { Some(HOTSPOT_SSID.to_string()) } else { None },
+            hotspot_password: if hotspot_active { Some(HOTSPOT_PASSWORD.to_string()) } else { None },
             ..Default::default()
         };
 

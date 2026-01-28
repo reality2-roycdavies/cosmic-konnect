@@ -80,6 +80,10 @@ pub struct UnifiedDiscoveryConfig {
     pub device_type: String,
     /// TCP port for connections
     pub tcp_port: u16,
+    /// WiFi hotspot SSID (for sharing via BLE)
+    pub hotspot_ssid: Option<String>,
+    /// WiFi hotspot password (for sharing via BLE)
+    pub hotspot_password: Option<String>,
 }
 
 impl Default for UnifiedDiscoveryConfig {
@@ -95,6 +99,8 @@ impl Default for UnifiedDiscoveryConfig {
             device_name: String::new(),
             device_type: "desktop".to_string(),
             tcp_port: 17161, // CKP default port
+            hotspot_ssid: None,
+            hotspot_password: None,
         }
     }
 }
@@ -226,6 +232,8 @@ impl UnifiedDiscoveryManager {
                 device_type: self.config.device_type.clone(),
                 tcp_port: self.config.tcp_port,
                 protocol_version: 1, // CKP version 1
+                hotspot_ssid: self.config.hotspot_ssid.clone(),
+                hotspot_password: self.config.hotspot_password.clone(),
             };
 
             let mut advertiser = BleAdvertiser::new(ble_identity);

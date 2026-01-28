@@ -47,6 +47,12 @@ pub const CHAR_PROTOCOL_VERSION: Uuid = Uuid::from_u128(0xc05a1c00a0aa3c70000600
 /// Connection Request characteristic
 pub const CHAR_CONNECTION_REQUEST: Uuid = Uuid::from_u128(0xc05a1c00a0aa3c700007000000000001);
 
+/// Hotspot SSID characteristic (for WiFi Direct fallback)
+pub const CHAR_HOTSPOT_SSID: Uuid = Uuid::from_u128(0xc05a1c00a0aa3c700008000000000001);
+
+/// Hotspot Password characteristic (for WiFi Direct fallback)
+pub const CHAR_HOTSPOT_PASSWORD: Uuid = Uuid::from_u128(0xc05a1c00a0aa3c700009000000000001);
+
 /// Scan timeout
 pub const SCAN_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -372,6 +378,10 @@ pub struct BleDeviceIdentity {
     pub device_type: String,
     pub tcp_port: u16,
     pub protocol_version: u8,
+    /// WiFi hotspot SSID (if hotspot is active)
+    pub hotspot_ssid: Option<String>,
+    /// WiFi hotspot password (if hotspot is active)
+    pub hotspot_password: Option<String>,
 }
 
 /// Events from BLE advertiser
@@ -654,6 +664,44 @@ async fn run_gatt_server(
         ..Default::default()
     };
 
+    // Hotspot SSID characteristic (for WiFi fallback when networks are isolated)
+    let hotspot_ssid = Arc::new(RwLock::new(identity.hotspot_ssid.clone().unwrap_or_default()));
+    let hotspot_ssid_read = hotspot_ssid.clone();
+    let char_hotspot_ssid = Characteristic {
+        uuid: CHAR_HOTSPOT_SSID,
+        read: Some(CharacteristicRead {
+            read: true,
+            fun: Box::new(move |_req| {
+                let value = hotspot_ssid_read.clone();
+                Box::pin(async move {
+                    let data = value.read().await;
+                    Ok(data.as_bytes().to_vec())
+                })
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    // Hotspot Password characteristic
+    let hotspot_password = Arc::new(RwLock::new(identity.hotspot_password.clone().unwrap_or_default()));
+    let hotspot_password_read = hotspot_password.clone();
+    let char_hotspot_password = Characteristic {
+        uuid: CHAR_HOTSPOT_PASSWORD,
+        read: Some(CharacteristicRead {
+            read: true,
+            fun: Box::new(move |_req| {
+                let value = hotspot_password_read.clone();
+                Box::pin(async move {
+                    let data = value.read().await;
+                    Ok(data.as_bytes().to_vec())
+                })
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
     // Build the service
     let service = Service {
         uuid: GATT_SERVICE_UUID,
@@ -666,6 +714,8 @@ async fn run_gatt_server(
             char_tcp_port,
             char_protocol_version,
             char_connection_request,
+            char_hotspot_ssid,
+            char_hotspot_password,
         ],
         ..Default::default()
     };
