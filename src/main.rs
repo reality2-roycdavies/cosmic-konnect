@@ -17,6 +17,7 @@ mod ckp;  // Cosmic Konnect Protocol (new simplified protocol)
 mod clipboard;
 mod connection;
 mod crypto;
+mod daemon_client;  // D-Bus client for daemon communication
 mod dbus_client;
 mod discovery;
 mod filetransfer;
@@ -407,7 +408,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if use_kdeconnect {
                 run_kdeconnect_tray_mode(verbose)
             } else {
-                run_ckp_tray_mode(verbose)
+                // Try daemon mode first, fall back to standalone
+                match run_daemon_tray_mode(verbose) {
+                    Ok(()) => Ok(()),
+                    Err(e) => {
+                        eprintln!("Daemon not available ({}), running standalone...", e);
+                        run_ckp_tray_mode(verbose)
+                    }
+                }
             }
         }
         Some(cli_mode) => {
@@ -417,7 +425,257 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-/// Run in tray mode with Cosmic Konnect Protocol (CKP)
+/// Check if the daemon is running via D-Bus
+fn is_daemon_running() -> bool {
+    std::process::Command::new("busctl")
+        .args(["--user", "status", "io.github.reality2_roycdavies.CosmicKonnect"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Start the daemon process
+fn start_daemon() -> Result<(), Box<dyn std::error::Error>> {
+    // Try to find the daemon binary
+    let daemon_paths = [
+        // Same directory as this executable
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("cosmic-konnect-daemon"))),
+        // In PATH
+        Some(std::path::PathBuf::from("cosmic-konnect-daemon")),
+        // Cargo target directory (development)
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("../../cosmic-konnect-daemon/target/release/cosmic-konnect-daemon"))),
+    ];
+
+    for path_opt in daemon_paths.iter() {
+        if let Some(path) = path_opt {
+            if path.exists() || path.to_str().map(|s| !s.contains('/')).unwrap_or(false) {
+                info!("Starting daemon: {:?}", path);
+                match Command::new(path)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    Ok(_) => {
+                        info!("Daemon started");
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        debug!("Failed to start daemon at {:?}: {}", path, e);
+                        continue;
+                    }
+                }
+            }
+        }
+    }
+
+    Err("Could not find or start cosmic-konnect-daemon".into())
+}
+
+/// Run in tray mode using the daemon via D-Bus
+fn run_daemon_tray_mode(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize logging
+    let level = if verbose { Level::DEBUG } else { Level::INFO };
+    FmtSubscriber::builder()
+        .with_max_level(level)
+        .with_target(false)
+        .compact()
+        .init();
+
+    // Set up autostart
+    ensure_autostart();
+    create_tray_lockfile();
+
+    // Start daemon if not running
+    if !is_daemon_running() {
+        info!("Daemon not running, starting it...");
+        if let Err(e) = start_daemon() {
+            warn!("Failed to start daemon: {}", e);
+            return Err(e);
+        }
+        // Wait for daemon to be ready
+        for i in 0..30 {
+            std::thread::sleep(Duration::from_millis(200));
+            if is_daemon_running() {
+                info!("Daemon ready after {}ms", (i + 1) * 200);
+                break;
+            }
+        }
+        if !is_daemon_running() {
+            return Err("Daemon failed to start within timeout".into());
+        }
+    }
+
+    let rt = tokio::runtime::Runtime::new()?;
+
+    let result = rt.block_on(async {
+        info!("Connecting to Cosmic Konnect daemon...");
+
+        // Try to connect to daemon
+        let mut client = daemon_client::DaemonClient::new();
+        client.connect().await.map_err(|e| format!("Daemon connection failed: {}", e))?;
+
+        info!("Connected to daemon");
+
+        // Start listening for daemon events
+        let mut daemon_events = client.subscribe();
+        client.start_signal_listener().await.map_err(|e| format!("Signal listener failed: {}", e))?;
+
+        // Start the tray
+        let (tray_handle, tray_rx) =
+            tray::start_tray().map_err(|e| format!("Failed to start tray: {}", e))?;
+        info!("System tray started (daemon mode)");
+
+        // Populate initial device list
+        if let Ok(devices) = client.list_devices().await {
+            for device in devices {
+                tray_handle.add_device(TrayDevice {
+                    id: device.device_id,
+                    name: device.name,
+                    device_type: device.device_type,
+                    battery: None,
+                });
+            }
+        }
+
+        // Main event loop
+        loop {
+            // Check for tray commands (non-blocking)
+            match tray_rx.try_recv() {
+                Ok(TrayCommand::Quit) => {
+                    info!("Quit requested from tray");
+                    break;
+                }
+                Ok(TrayCommand::RefreshDevices) => {
+                    info!("Refreshing devices...");
+                    if let Ok(devices) = client.list_devices().await {
+                        for device in devices {
+                            tray_handle.add_device(TrayDevice {
+                                id: device.device_id,
+                                name: device.name,
+                                device_type: device.device_type,
+                                battery: None,
+                            });
+                        }
+                    }
+                }
+                Ok(TrayCommand::PingDevice(device_id)) => {
+                    info!("Ping requested for device: {}", device_id);
+                    if let Err(e) = client.ping(&device_id).await {
+                        warn!("Failed to ping device: {}", e);
+                    }
+                }
+                Ok(TrayCommand::FindPhone(device_id)) => {
+                    info!("Find phone requested for device: {}", device_id);
+                    if let Err(e) = client.find_device(&device_id).await {
+                        warn!("Failed to find device: {}", e);
+                    }
+                }
+                Ok(TrayCommand::OpenSettings) => {
+                    info!("Opening settings window...");
+                    let _ = Command::new(
+                        std::env::current_exe().unwrap_or_else(|_| "cosmic-konnect".into()),
+                    )
+                    .spawn();
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    warn!("Tray disconnected");
+                    break;
+                }
+            }
+
+            tokio::select! {
+                // Daemon events
+                Ok(event) = daemon_events.recv() => {
+                    match event {
+                        daemon_client::DaemonEvent::DeviceDiscovered { device_id, name, device_type } => {
+                            info!("Discovered: {} ({})", name, device_type);
+                            tray_handle.add_device(TrayDevice {
+                                id: device_id,
+                                name,
+                                device_type,
+                                battery: None,
+                            });
+                        }
+                        daemon_client::DaemonEvent::DeviceLost { device_id } => {
+                            info!("Lost device: {}", device_id);
+                            tray_handle.remove_device(&device_id);
+                        }
+                        daemon_client::DaemonEvent::DeviceConnected { device_id, name } => {
+                            info!("Connected to: {}", name);
+                            tray_handle.add_device(TrayDevice {
+                                id: device_id,
+                                name,
+                                device_type: "phone".to_string(),
+                                battery: None,
+                            });
+                        }
+                        daemon_client::DaemonEvent::DeviceDisconnected { device_id } => {
+                            info!("Disconnected: {}", device_id);
+                            tray_handle.remove_device(&device_id);
+                        }
+                        daemon_client::DaemonEvent::ClipboardReceived { device_id, content } => {
+                            info!("Clipboard from {}: {} chars", device_id, content.len());
+                            if let Err(e) = clipboard::set_clipboard(&content) {
+                                warn!("Failed to set clipboard: {}", e);
+                            }
+                            let preview = if content.len() > 50 {
+                                format!("{}...", &content[..50])
+                            } else {
+                                content.clone()
+                            };
+                            let char_count = content.len();
+                            tokio::task::spawn_blocking(move || {
+                                let _ = notify_rust::Notification::new()
+                                    .summary("Clipboard Received")
+                                    .body(&format!("{} chars: {}", char_count, preview))
+                                    .icon("edit-paste")
+                                    .timeout(3000)
+                                    .show();
+                            });
+                        }
+                        daemon_client::DaemonEvent::NotificationReceived { device_id: _, app_name, title, text } => {
+                            let summary = format!("{}: {}", app_name, title);
+                            tokio::task::spawn_blocking(move || {
+                                let _ = notify_rust::Notification::new()
+                                    .summary(&summary)
+                                    .body(&text)
+                                    .icon("dialog-information")
+                                    .show();
+                            });
+                        }
+                        daemon_client::DaemonEvent::DaemonDisconnected => {
+                            error!("Daemon disconnected");
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    // Periodic: refresh tray lockfile
+                    static TICK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                    let tick = TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if tick % 300 == 0 {
+                        create_tray_lockfile();
+                    }
+                }
+            }
+        }
+
+        info!("Daemon tray mode stopping...");
+        Ok::<(), Box<dyn std::error::Error>>(())
+    });
+
+    remove_tray_lockfile();
+    result
+}
+
+/// Run in tray mode with Cosmic Konnect Protocol (CKP) - standalone mode
 fn run_ckp_tray_mode(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     let level = if verbose { Level::DEBUG } else { Level::INFO };

@@ -1,0 +1,52 @@
+[package]
+name = "cosmic-konnect-daemon"
+version = "0.1.0"
+edition = "2021"
+description = "Background service for Cosmic Konnect device connectivity"
+license = "GPL-3.0"
+repository = "https://github.com/reality2-roycdavies/cosmic-konnect"
+
+[[bin]]
+name = "cosmic-konnect-daemon"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# D-Bus
+zbus = { version = "4", default-features = false, features = ["tokio"] }
+
+# BLE (BlueZ bindings)
+bluer = { version = "0.17", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_bytes = "0.11"
+rmp-serde = "1"
+
+# Crypto
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+rand = "0.8"
+blake3 = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+thiserror = "1"
+anyhow = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+dirs = "5"
+hostname = "0.3"
+hex = "0.4"
+tokio-stream = "0.1"
+
+# mDNS/DNS-SD for LAN discovery
+mdns-sd = "0.11"
+flume = "0.11"
+
+[dev-dependencies]
+tokio-test = "0.4"

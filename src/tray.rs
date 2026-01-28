@@ -416,22 +416,42 @@ pub fn start_tray() -> Result<(TrayHandle, std::sync::mpsc::Receiver<TrayCommand
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
 
     std::thread::spawn(move || {
-        // Brief delay to ensure StatusNotifierWatcher is ready
-        std::thread::sleep(Duration::from_millis(500));
+        // Retry with exponential backoff to wait for StatusNotifierWatcher
+        let max_retries = 10;
+        let mut delay_ms = 500;
+        let mut last_error = String::new();
+        let mut ksni_handle_opt: Option<ksni::blocking::Handle<CosmicKonnectTray>> = None;
 
-        let tray = CosmicKonnectTray {
-            devices: Vec::new(),
-            command_tx: command_tx_clone,
-            should_quit: should_quit_clone.clone(),
-            revision: 0,
-        };
+        for attempt in 1..=max_retries {
+            std::thread::sleep(Duration::from_millis(delay_ms));
 
-        // Spawn the tray service
-        let is_sandboxed = std::path::Path::new("/.flatpak-info").exists();
-        let ksni_handle = match BlockingTrayMethods::disable_dbus_name(tray, is_sandboxed).spawn() {
-            Ok(h) => h,
-            Err(e) => {
-                let _ = ready_tx.send(Err(format!("Failed to spawn tray: {}", e)));
+            let tray = CosmicKonnectTray {
+                devices: Vec::new(),
+                command_tx: command_tx_clone.clone(),
+                should_quit: should_quit_clone.clone(),
+                revision: 0,
+            };
+
+            // Spawn the tray service
+            let is_sandboxed = std::path::Path::new("/.flatpak-info").exists();
+            match BlockingTrayMethods::disable_dbus_name(tray, is_sandboxed).spawn() {
+                Ok(handle) => {
+                    ksni_handle_opt = Some(handle);
+                    break;
+                }
+                Err(e) => {
+                    last_error = format!("{}", e);
+                    eprintln!("Tray spawn attempt {}/{} failed: {} (retrying in {}ms)",
+                              attempt, max_retries, last_error, delay_ms * 2);
+                    delay_ms = (delay_ms * 2).min(10000); // Cap at 10 seconds
+                }
+            }
+        }
+
+        let ksni_handle = match ksni_handle_opt {
+            Some(h) => h,
+            None => {
+                let _ = ready_tx.send(Err(format!("Failed to spawn tray after {} attempts: {}", max_retries, last_error)));
                 return;
             }
         };
@@ -536,9 +556,9 @@ pub fn start_tray() -> Result<(TrayHandle, std::sync::mpsc::Receiver<TrayCommand
         }
     });
 
-    // Wait for tray to be ready
+    // Wait for tray to be ready (longer timeout for retry attempts)
     ready_rx
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(Duration::from_secs(120))
         .map_err(|_| "Timeout waiting for tray to start".to_string())??;
 
     info!("System tray started");
