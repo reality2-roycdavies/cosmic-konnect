@@ -573,11 +573,29 @@ fn run_ckp_tray_mode(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
                             });
                         }
                         ckp::CkpServiceEvent::ClipboardReceived { device_id, content } => {
-                            debug!("Clipboard from {}: {} chars", device_id, content.len());
+                            info!("Clipboard from {}: {} chars", device_id, content.len());
                             // Update system clipboard using wl-copy
                             if let Err(e) = clipboard::set_clipboard(&content) {
                                 warn!("Failed to set clipboard: {}", e);
                             }
+                            // Show notification with clipboard preview
+                            let preview = if content.len() > 50 {
+                                format!("{}...", &content[..50])
+                            } else {
+                                content.clone()
+                            };
+                            let char_count = content.len();
+                            tokio::task::spawn_blocking(move || {
+                                if let Err(e) = notify_rust::Notification::new()
+                                    .summary("Clipboard Received")
+                                    .body(&format!("{} chars: {}", char_count, preview))
+                                    .icon("edit-paste")
+                                    .timeout(3000)
+                                    .show()
+                                {
+                                    tracing::warn!("Failed to show clipboard notification: {}", e);
+                                }
+                            });
                         }
                         ckp::CkpServiceEvent::NotificationReceived { device_id, notification } => {
                             info!("Notification from {}: {} - {}", device_id, notification.app, notification.title);
