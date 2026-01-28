@@ -8,12 +8,22 @@ description = "KDE Connect protocol implementation for COSMIC desktop"
 repository = "https://github.com/reality2-roycdavies/cosmic-konnect"
 
 [dependencies]
+# COSMIC GUI toolkit (for settings/status window)
+libcosmic = { git = "https://github.com/pop-os/libcosmic.git", default-features = false, features = [
+    "a11y",
+    "tokio",
+    "winit",
+    "wgpu",
+] }
+
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+rmp-serde = "1"  # MessagePack for CKP protocol
+serde_bytes = "0.11"  # Binary data in serde
 
 # Networking
 socket2 = { version = "0.5", features = ["all"] }
@@ -21,22 +31,52 @@ socket2 = { version = "0.5", features = ["all"] }
 # TLS
 rustls = "0.23"
 tokio-rustls = "0.26"
-rcgen = "0.13"  # For generating certificates
+rcgen = { version = "0.13", features = ["ring"] }  # For generating certificates
 x509-parser = "0.17"  # For parsing certificates
+pem = "3"  # For parsing PEM files
+time = "0.3"  # For certificate validity dates
+
+# Cryptography for CKP
+chacha20poly1305 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
 
 # Utilities
 uuid = { version = "1", features = ["v4"] }
 hostname = "0.4"
+hex = "0.4"  # Hex encoding for pairing keys
 dirs = "6"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+pnet_datalink = "0.35"  # For getting local IP addresses
+dns-lookup = "2"  # For hostname resolution
 
 # System info
 sysinfo = "0.33"
 
 # Signal handling
 ctrlc = "3"
+
+# System tray
+ksni = { version = "0.3", features = ["blocking"] }
+image = "0.25"
+notify = "7"
+
+# Desktop notifications
+notify-rust = "4"
+
+# Clipboard for CKP
+arboard = "3"
+
+# D-Bus IPC for tray/GUI communication
+zbus = "5"
+
+# BLE support via BlueZ
+bluer = { version = "0.17", features = ["bluetoothd"] }
+tokio-stream = "0.1"
 
 [dev-dependencies]
 tokio-test = "0.4"

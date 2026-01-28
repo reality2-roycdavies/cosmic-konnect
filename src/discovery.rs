@@ -174,14 +174,27 @@ impl DiscoveryService {
                         match result {
                             Ok((len, addr)) => {
                                 let data = &recv_buf[..len];
-                                if let Err(e) = handle_incoming_packet(
+                                match handle_incoming_packet(
                                     data,
                                     addr,
                                     &my_device_id,
                                     &devices,
                                     &event_tx,
                                 ).await {
-                                    debug!("Failed to handle packet from {}: {}", addr, e);
+                                    Ok(is_new_device) => {
+                                        // If this is a new device, send our identity directly to them
+                                        // This helps on networks where broadcast doesn't work well (e.g., hotspots)
+                                        if is_new_device {
+                                            let reply_addr = SocketAddr::new(addr.ip(), UDP_BROADCAST_PORT);
+                                            info!("Sending direct identity reply to {}", reply_addr);
+                                            if let Err(e) = send_socket.send_to(identity_json.as_bytes(), reply_addr).await {
+                                                error!("Failed to send direct reply to {}: {}", reply_addr, e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        debug!("Failed to handle packet from {}: {}", addr, e);
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -214,6 +227,26 @@ impl DiscoveryService {
 
         socket.send_to(json.as_bytes(), addr).await?;
         debug!("Sent identity to {}", addr);
+
+        Ok(())
+    }
+
+    /// Broadcast identity to all devices on the network
+    pub async fn broadcast_identity(&self) -> Result<(), DiscoveryError> {
+        let socket = UdpSocket::bind("0.0.0.0:0").await?;
+        socket.set_broadcast(true)?;
+
+        let identity_with_port = self.identity.clone().with_tcp_port(self.config.tcp_port);
+        let packet = identity_with_port.to_packet()?;
+        let json = packet.to_json_line()?;
+
+        let broadcast_addr = SocketAddr::new(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::BROADCAST),
+            UDP_BROADCAST_PORT,
+        );
+
+        socket.send_to(json.as_bytes(), broadcast_addr).await?;
+        debug!("Broadcast identity");
 
         Ok(())
     }
@@ -265,13 +298,14 @@ async fn broadcast_identity(socket: &UdpSocket, identity_json: &str) -> Result<(
 }
 
 /// Handle an incoming UDP packet
+/// Returns true if this was a newly discovered device
 async fn handle_incoming_packet(
     data: &[u8],
     addr: SocketAddr,
     my_device_id: &str,
     devices: &Arc<RwLock<HashMap<String, DiscoveredDevice>>>,
     event_tx: &broadcast::Sender<DiscoveryEvent>,
-) -> Result<(), DiscoveryError> {
+) -> Result<bool, DiscoveryError> {
     // Parse as UTF-8
     let json = std::str::from_utf8(data)
         .map_err(|e| DiscoveryError::InvalidPacket(format!("Invalid UTF-8: {}", e)))?;
@@ -283,7 +317,7 @@ async fn handle_incoming_packet(
 
     // We only care about identity packets for discovery
     if packet.packet_type != "kdeconnect.identity" {
-        return Ok(());
+        return Ok(false);
     }
 
     // Parse the identity body
@@ -292,7 +326,7 @@ async fn handle_incoming_packet(
     // Ignore our own broadcasts
     if identity.device_id == my_device_id {
         trace!("Ignoring our own broadcast");
-        return Ok(());
+        return Ok(false);
     }
 
     // Get the TCP port from the identity
@@ -325,7 +359,7 @@ async fn handle_incoming_packet(
 
     let _ = event_tx.send(event);
 
-    Ok(())
+    Ok(is_new)
 }
 
 /// Remove devices that haven't been seen recently
