@@ -1,139 +1,173 @@
-# cosmic-konnect
+# Cosmic Konnect
 
-KDE Connect protocol implementation for COSMIC desktop.
+A device connectivity application for the [COSMIC desktop environment](https://system76.com/cosmic), enabling seamless communication between your Linux desktop and Android devices.
 
-## Overview
+**Android companion app:** [cosmic-konnect-android](https://github.com/reality2-roycdavies/cosmic-konnect-android)
 
-cosmic-konnect implements the [KDE Connect](https://kdeconnect.kde.org/) protocol, allowing COSMIC desktop users to connect their phones, tablets, and other devices for seamless integration.
+## Features
 
-### Features
+- **Device Discovery** - Automatically discover devices on your local network
+- **Clipboard Sync** - Share clipboard content between desktop and phone
+- **Ping/Find Device** - Send pings between devices, ring your phone to find it
+- **Desktop Notifications** - Get notified when clipboard is received
+- **System Tray** - Runs quietly in your system tray with quick access to features
+- **Autostart** - Automatically starts on login
 
-- [x] System tray icon with theme color adaptation
-- [x] Device discovery (UDP broadcast/listen)
-- [x] Device pairing (TLS with ECDSA certificates)
-- [x] Ping plugin
-- [x] Battery status (receive and display in tray)
-- [ ] Clipboard synchronization
-- [ ] Notification mirroring
-- [ ] File transfer
-- [ ] Remote input control
-- [ ] Media playback control
-- [ ] SMS messaging
+### Coming Soon
 
-### Compatibility
-
-Compatible with:
-- KDE Connect (Android, Linux, Windows)
-- GSConnect (GNOME)
-- Valent (GTK desktops)
-- Zorin Connect
+- BLE (Bluetooth Low Energy) discovery
+- Wi-Fi Direct support
+- File transfer
+- Notification mirroring
 
 ## Installation
 
-### From Source
+### Dependencies
+
+**Arch Linux / Manjaro:**
+```bash
+sudo pacman -S rust gtk4 libadwaita openssl
+```
+
+**Fedora:**
+```bash
+sudo dnf install rust cargo gtk4-devel libadwaita-devel openssl-devel
+```
+
+**Ubuntu / Debian:**
+```bash
+sudo apt install rustc cargo libgtk-4-dev libadwaita-1-dev libssl-dev
+```
+
+### Building from Source
 
 ```bash
+# Clone the repository
 git clone https://github.com/reality2-roycdavies/cosmic-konnect.git
 cd cosmic-konnect
+
+# Build release version
 cargo build --release
+
+# The binary will be at target/release/cosmic-konnect
+```
+
+### Installing
+
+```bash
+# Install to ~/.local/bin (make sure it's in your PATH)
+mkdir -p ~/.local/bin
+cp target/release/cosmic-konnect ~/.local/bin/
+
+# Or install system-wide
 sudo cp target/release/cosmic-konnect /usr/local/bin/
 ```
 
 ## Usage
 
+### System Tray Mode (Recommended)
+
+Run with system tray icon - this is the recommended way to use the app:
+
 ```bash
-# Run in discovery mode (continuous)
-cosmic-konnect
-
-# Discover and pair with devices
-cosmic-konnect --pair
-
-# Scan for devices for 5 seconds
-cosmic-konnect --list
-
-# Broadcast identity once
-cosmic-konnect --broadcast
-
-# Enable verbose logging
-cosmic-konnect -v
+cosmic-konnect --tray
 ```
 
-### Pairing with a Phone
+The app will:
+- Start in the system tray
+- Automatically discover devices on your network
+- Auto-connect to previously paired devices
+- Set up autostart for future logins
 
-1. Install KDE Connect on your Android phone (from Play Store or F-Droid)
-2. Ensure both devices are on the same network
-3. Run `cosmic-konnect --pair`
-4. Accept the pairing request on your phone
-5. The device will now auto-connect when on the same network
+### Other Modes
 
-## Protocol
+```bash
+# Open GUI (starts tray first if not running)
+cosmic-konnect
 
-KDE Connect uses:
-- **UDP port 1716** for device discovery (broadcast)
-- **TCP port 1716** for connections
-- **TLS encryption** with self-signed ECDSA certificates
-- **JSON packets** for all communication
+# Discover devices (CLI mode)
+cosmic-konnect --discover
 
-### Protocol Details
+# List discovered devices and exit
+cosmic-konnect --list
 
-The KDE Connect protocol has some unique characteristics:
+# Enable verbose logging
+cosmic-konnect --tray --verbose
+```
 
-- **Inverted TLS roles**: The TCP client becomes the TLS server, and vice versa
-- **Identity before TLS**: Identity packets are exchanged in plaintext, then TLS is established
-- **Certificate-based pairing**: Devices trust each other by storing certificates
+### Pairing with Android Device
+
+1. Start the desktop app: `cosmic-konnect --tray`
+2. Install and open the [Android companion app](https://github.com/reality2-roycdavies/cosmic-konnect-android)
+3. Both devices should discover each other automatically on the same network
+4. Tap the device in the Android app to connect
+5. Accept the pairing request on both devices
+
+### Sharing Clipboard
+
+**Desktop to Phone:**
+- Copy text on your desktop
+- The clipboard will automatically sync to your phone (when connected)
+- Phone will vibrate to confirm receipt
+
+**Phone to Desktop:**
+- Copy text on your phone
+- Tap the clipboard icon in the Android app
+- A notification will appear on your desktop with the clipboard content
 
 ## Configuration
 
-Configuration and identity are stored in:
-- `~/.config/cosmic-konnect/identity.json` - Device identity and certificates
-- `~/.config/cosmic-konnect/trusted_devices/` - Trusted device certificates
+Configuration is stored in `~/.config/cosmic-konnect/`:
 
-## System Tray
+- `identity.json` - Device identity and keys
+- `paired_devices.json` - List of paired devices
 
-The application runs with a system tray icon that:
-- Shows connection status (phone icon)
-- Adapts color to COSMIC theme settings automatically
-- Updates when theme changes (light/dark mode)
-- Displays connected devices with battery percentage
-- Provides quick access to refresh and quit
+## Ports Used
 
-The tray icon uses the StatusNotifierItem (SNI) protocol, which is supported by:
-- COSMIC desktop
-- KDE Plasma
-- GNOME (with AppIndicator extension)
-- Most other modern Linux desktops
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 17160 | UDP | Device discovery broadcasts |
+| 17161 | TCP | Encrypted connections |
 
-## Development Status
+Make sure these ports are allowed through your firewall for devices to discover each other.
 
-This project is in active development. Currently implemented:
-- [x] Device identity generation and persistence
-- [x] ECDSA certificate generation
-- [x] UDP broadcast for discovery
-- [x] Listening for other devices' broadcasts
-- [x] Device tracking and timeout
-- [x] TCP listener for incoming connections
-- [x] TCP client for outgoing connections
-- [x] TLS with inverted client/server roles
-- [x] Pairing request/accept flow
-- [x] Ping send/receive
-- [x] Battery status receive
-- [x] System tray with theme integration
+## Troubleshooting
 
-Next steps:
-- [ ] Plugin architecture
-- [ ] Notification mirroring
-- [ ] Clipboard sync
-- [ ] File transfer
+### Devices not discovering each other
+
+1. Ensure both devices are on the same network
+2. Check firewall allows UDP 17160 and TCP 17161
+3. Try restarting the service (click refresh button or restart app)
+
+### Connection drops frequently
+
+1. Check network stability
+2. Ensure the phone isn't in battery saver mode (may kill background services)
+3. Check Android battery optimization settings for Cosmic Konnect
+
+### Verbose logging
+
+```bash
+RUST_LOG=debug cosmic-konnect --tray --verbose
+```
+
+## Protocol
+
+Cosmic Konnect uses its own lightweight protocol (CKP - Cosmic Konnect Protocol) with:
+- MessagePack encoding for efficiency
+- X25519 key exchange for secure pairing
+- ChaCha20-Poly1305 encryption for messages
 
 ## License
 
-MIT
+MIT License - see LICENSE file for details.
 
-## Credits
+## Contributing
 
-Created collaboratively with Claude (Anthropic's AI assistant) using Claude Code.
+Contributions are welcome! Please feel free to submit issues and pull requests.
 
-Protocol documentation and references:
-- [Valent Protocol Reference](https://valent.andyholmes.ca/documentation/protocol.html)
-- [KDE Connect Wiki](https://community.kde.org/KDEConnect)
-- [KDE Connect Source Code](https://github.com/KDE/kdeconnect-kde)
+## Related Projects
+
+- [cosmic-konnect-android](https://github.com/reality2-roycdavies/cosmic-konnect-android) - Android companion app
+- [COSMIC Desktop](https://github.com/pop-os/cosmic-epoch) - The COSMIC desktop environment
+- [KDE Connect](https://kdeconnect.kde.org/) - Inspiration for this project
