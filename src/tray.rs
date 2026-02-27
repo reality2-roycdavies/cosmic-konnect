@@ -51,21 +51,21 @@ pub struct TrayState {
 // COSMIC Theme Integration
 // ============================================================================
 
-/// Get the host's COSMIC config directory
-fn host_cosmic_config_dir() -> Option<PathBuf> {
+/// Get the COSMIC config directory
+fn cosmic_config_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".config/cosmic"))
 }
 
 /// Get the path to COSMIC's theme mode config file
 fn cosmic_theme_path() -> Option<PathBuf> {
-    host_cosmic_config_dir().map(|d| d.join("com.system76.CosmicTheme.Mode/v1/is_dark"))
+    cosmic_config_dir().map(|d| d.join("com.system76.CosmicTheme.Mode/v1/is_dark"))
 }
 
 /// Get the path to the active theme directory
 fn cosmic_theme_dir() -> Option<PathBuf> {
     let is_dark = is_dark_mode();
     let theme_name = if is_dark { "Dark" } else { "Light" };
-    host_cosmic_config_dir().map(|d| d.join(format!("com.system76.CosmicTheme.{}/v1", theme_name)))
+    cosmic_config_dir().map(|d| d.join(format!("com.system76.CosmicTheme.{}/v1", theme_name)))
 }
 
 /// Get modification time of theme color files for change detection
