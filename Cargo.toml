@@ -10,13 +10,18 @@ homepage = "https://github.com/reality2-roycdavies/cosmic-konnect"
 keywords = ["cosmic-desktop", "kdeconnect", "device-sync", "cosmic-applet", "linux"]
 categories = ["gui", "network-programming"]
 
+[lib]
+name = "cosmic_konnect"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cosmic-konnect"
+path = "src/main.rs"
+
 [dependencies]
-# COSMIC GUI toolkit (for settings/status window)
+# COSMIC GUI toolkit (applet mode for panel integration)
 libcosmic = { git = "https://github.com/pop-os/libcosmic.git", default-features = false, features = [
-    "a11y",
-    "tokio",
-    "winit",
-    "wgpu",
+    "applet",
 ] }
 
 # Async runtime
@@ -63,9 +68,7 @@ sysinfo = "0.33"
 # Signal handling
 ctrlc = "3"
 
-# System tray
-ksni = { version = "0.3", features = ["blocking"] }
-image = "0.25"
+# File system notifications
 notify = "7"
 
 # Desktop notifications
@@ -84,3 +87,7 @@ futures-util = "0.3"
 
 [dev-dependencies]
 tokio-test = "0.4"
+
+[profile.release]
+lto = true
+codegen-units = 1

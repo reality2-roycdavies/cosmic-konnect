@@ -1,0 +1,6 @@
+{
+    "name": "Cosmic Konnect",
+    "icon": "io.github.reality2_roycdavies.cosmic-konnect-symbolic",
+    "applet_id": "io.github.reality2_roycdavies.cosmic-konnect",
+    "settings_cmd": "cosmic-konnect --settings-standalone"
+}

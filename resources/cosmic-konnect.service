@@ -1,0 +1,19 @@
+[Unit]
+Description=Cosmic Konnect Daemon
+Documentation=https://github.com/reality2-roycdavies/cosmic-konnect
+After=graphical-session.target bluetooth.target network.target
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/cosmic-konnect-daemon
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+# Security hardening (user service, so limited options)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

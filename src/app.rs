@@ -107,14 +107,6 @@ impl Application for CosmicKonnectApp {
     fn update(&mut self, message: Self::Message) -> Task<Action<Self::Message>> {
         match message {
             Message::Refresh | Message::Tick => {
-                // Refresh GUI lockfile periodically
-                static TICK_COUNT: std::sync::atomic::AtomicU32 =
-                    std::sync::atomic::AtomicU32::new(0);
-                let count = TICK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if count % 15 == 0 {
-                    crate::create_gui_lockfile();
-                }
-
                 // Fetch data from daemon
                 Task::perform(fetch_daemon_data(), |result| {
                     match result {

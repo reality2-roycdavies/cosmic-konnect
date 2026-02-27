@@ -9,11 +9,12 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use crate::error::DaemonError;
+use crate::protocol::connection::ConnectionManager;
 use crate::AppState;
 use crate::gatt::{BleAdvertiser, BleScanner, BleDeviceIdentity, BleEvent};
 
 /// Run the BLE subsystem
-pub async fn run(state: Arc<RwLock<AppState>>) -> Result<(), DaemonError> {
+pub async fn run(state: Arc<RwLock<AppState>>, connection_manager: Arc<ConnectionManager>) -> Result<(), DaemonError> {
     info!("Starting BLE subsystem...");
 
     // Check if BLE is enabled
@@ -29,6 +30,19 @@ pub async fn run(state: Arc<RwLock<AppState>>) -> Result<(), DaemonError> {
     let scanner = Arc::new(BleScanner::new());
     let mut scanner_rx = scanner.subscribe();
 
+    // Try to start a WiFi hotspot so Android can connect on isolated networks
+    let hotspot_config = crate::wifi_hotspot::HotspotConfig::default();
+    let (hotspot_ssid, hotspot_password) = match crate::wifi_hotspot::start_hotspot(&hotspot_config) {
+        Ok(info) => {
+            info!("WiFi hotspot active: SSID={}, IP={:?}", info.ssid, info.ip_address);
+            (Some(info.ssid), Some(info.password))
+        }
+        Err(e) => {
+            warn!("WiFi hotspot not available: {} (will advertise without hotspot)", e);
+            (None, None)
+        }
+    };
+
     // Get identity for advertising
     let identity = {
         let state_guard = state.read().await;
@@ -38,8 +52,8 @@ pub async fn run(state: Arc<RwLock<AppState>>) -> Result<(), DaemonError> {
             device_type: state_guard.config.identity.device_type.to_string(),
             tcp_port: state_guard.config.tcp_port,
             protocol_version: crate::config::PROTOCOL_VERSION,
-            hotspot_ssid: None,
-            hotspot_password: None,
+            hotspot_ssid,
+            hotspot_password,
         }
     };
 
@@ -69,7 +83,6 @@ pub async fn run(state: Arc<RwLock<AppState>>) -> Result<(), DaemonError> {
                         );
 
                         // Add to device manager
-                        let state_guard = state.read().await;
                         let addresses: Vec<std::net::IpAddr> = device.ip_addresses
                             .iter()
                             .filter_map(|s| s.parse().ok())
@@ -83,13 +96,43 @@ pub async fn run(state: Arc<RwLock<AppState>>) -> Result<(), DaemonError> {
                             _ => crate::config::DeviceType::Desktop,
                         };
 
-                        state_guard.device_manager.device_discovered(
-                            device.device_id,
-                            device.device_name,
-                            device_type,
-                            addresses,
-                            device.tcp_port,
-                        ).await;
+                        {
+                            let state_guard = state.read().await;
+                            state_guard.device_manager.device_discovered(
+                                device.device_id.clone(),
+                                device.device_name.clone(),
+                                device_type,
+                                addresses.clone(),
+                                device.tcp_port,
+                            ).await;
+                        }
+
+                        // Auto-connect if not already connected
+                        let already_connected = connection_manager.connected_devices().await
+                            .contains(&device.device_id);
+
+                        if !already_connected && !addresses.is_empty() {
+                            let cm = connection_manager.clone();
+                            let tcp_port = device.tcp_port;
+                            let device_name = device.device_name.clone();
+                            let addrs = addresses.clone();
+                            tokio::spawn(async move {
+                                // Try each address
+                                for addr in &addrs {
+                                    let sock_addr = std::net::SocketAddr::new(*addr, tcp_port);
+                                    info!("Auto-connecting to {} at {}", device_name, sock_addr);
+                                    match cm.connect(sock_addr).await {
+                                        Ok(()) => {
+                                            info!("Auto-connected to {} at {}", device_name, sock_addr);
+                                            return;
+                                        }
+                                        Err(e) => {
+                                            warn!("Auto-connect to {} failed: {}", sock_addr, e);
+                                        }
+                                    }
+                                }
+                            });
+                        }
                     }
                     Ok(BleEvent::ScanStarted) => {
                         info!("BLE scan started");

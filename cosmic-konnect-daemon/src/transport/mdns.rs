@@ -62,14 +62,35 @@ pub async fn run(state: Arc<RwLock<AppState>>) -> Result<(), DaemonError> {
     properties.insert("type".to_string(), device_type.to_string());
     properties.insert("protocol".to_string(), "1".to_string());
 
-    let service_info = match ServiceInfo::new(
-        SERVICE_TYPE,
-        &instance_name,
-        &hostname,
-        "",  // Will be auto-filled with local addresses
-        tcp_port,
-        properties,
-    ) {
+    // Collect all non-loopback IPv4 addresses via `ip` command so we advertise
+    // on every interface (main WiFi + hotspot). This ensures the phone on the
+    // hotspot subnet can discover us via mDNS.
+    let all_addrs = get_local_ipv4_addresses();
+    info!("mDNS advertising on addresses: {:?}", all_addrs);
+
+    let service_info = if all_addrs.is_empty() {
+        ServiceInfo::new(
+            SERVICE_TYPE,
+            &instance_name,
+            &hostname,
+            "",  // Auto-detect
+            tcp_port,
+            properties,
+        )
+    } else {
+        let addr_strs: Vec<String> = all_addrs.iter().map(|a| a.to_string()).collect();
+        let addr_refs: Vec<&str> = addr_strs.iter().map(|s| s.as_str()).collect();
+        ServiceInfo::new(
+            SERVICE_TYPE,
+            &instance_name,
+            &hostname,
+            addr_refs.as_slice(),
+            tcp_port,
+            properties,
+        )
+    };
+
+    let service_info = match service_info {
         Ok(info) => info,
         Err(e) => {
             error!("Failed to create service info: {}", e);
@@ -182,4 +203,31 @@ pub async fn run(state: Arc<RwLock<AppState>>) -> Result<(), DaemonError> {
 
     info!("mDNS subsystem stopped");
     Ok(())
+}
+
+/// Get all non-loopback IPv4 addresses on this machine via the `ip` command.
+fn get_local_ipv4_addresses() -> Vec<std::net::Ipv4Addr> {
+    let mut addrs = Vec::new();
+
+    if let Ok(output) = std::process::Command::new("ip")
+        .args(["-4", "-o", "addr", "show"])
+        .output()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            // Format: "N: ifname    inet A.B.C.D/prefix ..."
+            if let Some(inet_pos) = line.find("inet ") {
+                let rest = &line[inet_pos + 5..];
+                if let Some(slash) = rest.find('/') {
+                    if let Ok(v4) = rest[..slash].parse::<std::net::Ipv4Addr>() {
+                        if !v4.is_loopback() {
+                            addrs.push(v4);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    addrs
 }

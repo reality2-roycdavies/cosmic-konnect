@@ -15,7 +15,7 @@ use tracing::{debug, error, info, warn};
 
 use super::crypto::{
     derive_pairing_key, generate_session_nonce, generate_verification_code, KeyPair, PairingInfo,
-    PUBLIC_KEY_SIZE,
+    SessionCrypto, PUBLIC_KEY_SIZE,
 };
 use super::message::*;
 use super::{CONNECTION_TIMEOUT_SECS, MAGIC, MAX_MESSAGE_SIZE, TCP_PORT};
@@ -136,8 +136,9 @@ impl ConnectionManager {
     }
 
     pub async fn start_listener(&self) -> Result<(), ConnectionError> {
-        let listener = TcpListener::bind(("0.0.0.0", TCP_PORT)).await?;
-        info!("Listening for connections on port {}", TCP_PORT);
+        let port = self.identity.tcp_port;
+        let listener = TcpListener::bind(("0.0.0.0", port)).await?;
+        info!("Listening for connections on port {}", port);
 
         let identity = self.identity.clone();
         let connections = self.connections.clone();
@@ -267,6 +268,36 @@ impl ConnectionManager {
             Err(ConnectionError::NotConnected)
         }
     }
+
+    pub async fn accept_pairing(&self, device_id: &str) -> Result<(), ConnectionError> {
+        info!("Accepting pairing with device: {}", device_id);
+
+        let connections = self.connections.read().await;
+        if let Some(conn) = connections.get(device_id) {
+            conn.command_tx
+                .send(ConnectionCommand::AcceptPairing)
+                .await
+                .map_err(|_| ConnectionError::Protocol("Failed to send command".into()))?;
+            Ok(())
+        } else {
+            Err(ConnectionError::NotConnected)
+        }
+    }
+
+    pub async fn reject_pairing(&self, device_id: &str) -> Result<(), ConnectionError> {
+        info!("Rejecting pairing with device: {}", device_id);
+
+        let connections = self.connections.read().await;
+        if let Some(conn) = connections.get(device_id) {
+            conn.command_tx
+                .send(ConnectionCommand::RejectPairing)
+                .await
+                .map_err(|_| ConnectionError::Protocol("Failed to send command".into()))?;
+            Ok(())
+        } else {
+            Err(ConnectionError::NotConnected)
+        }
+    }
 }
 
 /// Handle a connection (both incoming and outgoing)
@@ -350,12 +381,55 @@ async fn handle_connection(
     let mut pairing_key_pair: Option<KeyPair> = None;
     let mut peer_public_key: Option<[u8; PUBLIC_KEY_SIZE]> = None;
 
+    // Session encryption (set after pairing completes)
+    let mut session_crypto: Option<SessionCrypto> = None;
+
+    // Extract session nonces for later session key derivation
+    let our_session_nonce = identity_msg.session_nonce.clone().unwrap_or_default();
+    let peer_session_nonce = peer_identity.session_nonce.clone().unwrap_or_default();
+
+    /// Helper to set up session encryption after pairing
+    fn setup_session_crypto(
+        pairing_key: &[u8; 32],
+        our_nonce: &[u8],
+        peer_nonce: &[u8],
+    ) -> SessionCrypto {
+        SessionCrypto::new(pairing_key, our_nonce, peer_nonce)
+    }
+
     // Main connection loop
     loop {
         tokio::select! {
-            result = read_message(&mut reader) => {
+            result = read_raw_payload(&mut reader) => {
                 match result {
-                    Ok((message, _flags)) => {
+                    Ok((flags, payload)) => {
+                        // Decrypt if encrypted flag is set
+                        let decrypted_payload = if flags.encrypted {
+                            if let Some(ref crypto) = session_crypto {
+                                match crypto.decrypt(&payload) {
+                                    Ok(plain) => plain,
+                                    Err(e) => {
+                                        error!("Decryption failed: {}", e);
+                                        continue;
+                                    }
+                                }
+                            } else {
+                                warn!("Received encrypted message but no session crypto");
+                                continue;
+                            }
+                        } else {
+                            payload
+                        };
+
+                        // Deserialize message
+                        let message = match deserialize_message(&decrypted_payload) {
+                            Ok(msg) => msg,
+                            Err(e) => {
+                                debug!("Failed to deserialize message: {}", e);
+                                continue;
+                            }
+                        };
+
                         match &message {
                             Message::PairRequest(req) => {
                                 if req.public_key.len() == PUBLIC_KEY_SIZE {
@@ -384,6 +458,14 @@ async fn handle_connection(
                                             let pairing_key = derive_pairing_key(shared.as_bytes());
                                             let code = generate_verification_code(shared.as_bytes());
                                             info!("Pairing accepted! Verification code: {}", code);
+
+                                            // Set up session encryption
+                                            session_crypto = Some(setup_session_crypto(
+                                                &pairing_key,
+                                                &our_session_nonce,
+                                                &peer_session_nonce,
+                                            ));
+                                            info!("Session encryption enabled");
 
                                             let pairing_info = PairingInfo {
                                                 device_id: device_id.clone(),
@@ -438,17 +520,13 @@ async fn handle_connection(
             Some(cmd) = command_rx.recv() => {
                 match cmd {
                     ConnectionCommand::Send(message) => {
-                        let flags = MessageFlags::default();
-                        match message.encode(flags) {
-                            Ok(data) => {
-                                if let Err(e) = writer.write_all(&data).await {
-                                    error!("Write error: {}", e);
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                error!("Encode error: {}", e);
-                            }
+                        if let Err(e) = send_message_encrypted(
+                            &mut writer,
+                            &message,
+                            session_crypto.as_ref(),
+                        ).await {
+                            error!("Write error: {}", e);
+                            break;
                         }
                     }
                     ConnectionCommand::RequestPairing(key_pair) => {
@@ -463,6 +541,7 @@ async fn handle_connection(
                             public_key,
                         });
 
+                        // Pairing messages are sent unencrypted
                         if let Ok(data) = request.encode(MessageFlags::default()) {
                             if let Err(e) = writer.write_all(&data).await {
                                 error!("Failed to send PairRequest: {}", e);
@@ -481,6 +560,16 @@ async fn handle_connection(
                             if let Some(peer_key) = peer_public_key.take() {
                                 let shared = kp.key_exchange(&peer_key);
                                 let pairing_key = derive_pairing_key(shared.as_bytes());
+                                let code = generate_verification_code(shared.as_bytes());
+                                info!("Pairing accepted (acceptor)! Verification code: {}", code);
+
+                                // Set up session encryption
+                                session_crypto = Some(setup_session_crypto(
+                                    &pairing_key,
+                                    &our_session_nonce,
+                                    &peer_session_nonce,
+                                ));
+                                info!("Session encryption enabled");
 
                                 let pairing_info = PairingInfo {
                                     device_id: device_id.clone(),
@@ -503,6 +592,7 @@ async fn handle_connection(
                                 });
                             }
 
+                            // PairResponse is sent unencrypted (crypto is set up after)
                             if let Ok(data) = response.encode(MessageFlags::default()) {
                                 let _ = writer.write_all(&data).await;
                             }
@@ -526,6 +616,7 @@ async fn handle_connection(
                             reason: Some("user_request".to_string()),
                         });
 
+                        // Send disconnect unencrypted for reliability
                         if let Ok(data) = disconnect.encode(MessageFlags::default()) {
                             let _ = writer.write_all(&data).await;
                         }
@@ -557,10 +648,11 @@ struct TypeWrapper {
     msg_type: u8,
 }
 
-/// Read a message from the stream
-async fn read_message<R: AsyncReadExt + Unpin>(
+/// Read the raw header + payload from the stream (without deserializing).
+/// Returns (flags, raw_payload_bytes).
+async fn read_raw_payload<R: AsyncReadExt + Unpin>(
     reader: &mut R,
-) -> Result<(Message, MessageFlags), ConnectionError> {
+) -> Result<(MessageFlags, Vec<u8>), ConnectionError> {
     let mut header = [0u8; 8];
     reader.read_exact(&mut header).await?;
 
@@ -578,28 +670,78 @@ async fn read_message<R: AsyncReadExt + Unpin>(
     let mut payload = vec![0u8; length];
     reader.read_exact(&mut payload).await?;
 
-    let type_value: TypeWrapper = rmp_serde::from_slice(&payload)?;
+    Ok((flags, payload))
+}
+
+/// Deserialize a MessagePack payload into a Message enum.
+fn deserialize_message(payload: &[u8]) -> Result<Message, ConnectionError> {
+    let type_value: TypeWrapper = rmp_serde::from_slice(payload)?;
     let msg_type = MessageType::try_from(type_value.msg_type)
         .map_err(|e| ConnectionError::Protocol(e.to_string()))?;
 
     let message = match msg_type {
-        MessageType::Identity => Message::Identity(rmp_serde::from_slice(&payload)?),
-        MessageType::PairRequest => Message::PairRequest(rmp_serde::from_slice(&payload)?),
-        MessageType::PairResponse => Message::PairResponse(rmp_serde::from_slice(&payload)?),
-        MessageType::Ping => Message::Ping(rmp_serde::from_slice(&payload)?),
-        MessageType::Pong => Message::Pong(rmp_serde::from_slice(&payload)?),
-        MessageType::Clipboard => Message::Clipboard(rmp_serde::from_slice(&payload)?),
-        MessageType::Notification => Message::Notification(rmp_serde::from_slice(&payload)?),
-        MessageType::NotificationAction => Message::NotificationAction(rmp_serde::from_slice(&payload)?),
-        MessageType::FileOffer => Message::FileOffer(rmp_serde::from_slice(&payload)?),
-        MessageType::FindDevice => Message::FindDevice(rmp_serde::from_slice(&payload)?),
-        MessageType::ShareUrl => Message::ShareUrl(rmp_serde::from_slice(&payload)?),
-        MessageType::ShareText => Message::ShareText(rmp_serde::from_slice(&payload)?),
-        MessageType::Disconnect => Message::Disconnect(rmp_serde::from_slice(&payload)?),
+        MessageType::Identity => Message::Identity(rmp_serde::from_slice(payload)?),
+        MessageType::PairRequest => Message::PairRequest(rmp_serde::from_slice(payload)?),
+        MessageType::PairResponse => Message::PairResponse(rmp_serde::from_slice(payload)?),
+        MessageType::Ping => Message::Ping(rmp_serde::from_slice(payload)?),
+        MessageType::Pong => Message::Pong(rmp_serde::from_slice(payload)?),
+        MessageType::Clipboard => Message::Clipboard(rmp_serde::from_slice(payload)?),
+        MessageType::Notification => Message::Notification(rmp_serde::from_slice(payload)?),
+        MessageType::NotificationAction => Message::NotificationAction(rmp_serde::from_slice(payload)?),
+        MessageType::FileOffer => Message::FileOffer(rmp_serde::from_slice(payload)?),
+        MessageType::FindDevice => Message::FindDevice(rmp_serde::from_slice(payload)?),
+        MessageType::ShareUrl => Message::ShareUrl(rmp_serde::from_slice(payload)?),
+        MessageType::ShareText => Message::ShareText(rmp_serde::from_slice(payload)?),
+        MessageType::Disconnect => Message::Disconnect(rmp_serde::from_slice(payload)?),
         _ => return Err(ConnectionError::Protocol(format!("Unhandled message type: {:?}", msg_type))),
     };
 
-    Ok((message, flags))
+    Ok(message)
+}
+
+/// Send a message, encrypting the payload if session crypto is available.
+async fn send_message_encrypted<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    message: &Message,
+    session_crypto: Option<&SessionCrypto>,
+) -> Result<(), ConnectionError> {
+    let payload = match message {
+        Message::Identity(msg) => rmp_serde::encode::to_vec_named(msg)?,
+        Message::PairRequest(msg) => rmp_serde::encode::to_vec_named(msg)?,
+        Message::PairResponse(msg) => rmp_serde::encode::to_vec_named(msg)?,
+        Message::Ping(msg) => rmp_serde::encode::to_vec_named(msg)?,
+        Message::Pong(msg) => rmp_serde::encode::to_vec_named(msg)?,
+        Message::Clipboard(msg) => rmp_serde::encode::to_vec_named(msg)?,
+        Message::Notification(msg) => rmp_serde::encode::to_vec_named(msg)?,
+        Message::NotificationAction(msg) => rmp_serde::encode::to_vec_named(msg)?,
+        Message::FileOffer(msg) => rmp_serde::encode::to_vec_named(msg)?,
+        Message::FindDevice(msg) => rmp_serde::encode::to_vec_named(msg)?,
+        Message::ShareUrl(msg) => rmp_serde::encode::to_vec_named(msg)?,
+        Message::ShareText(msg) => rmp_serde::encode::to_vec_named(msg)?,
+        Message::Disconnect(msg) => rmp_serde::encode::to_vec_named(msg)?,
+    };
+
+    let (final_payload, flags) = if let Some(crypto) = session_crypto {
+        let encrypted = crypto.encrypt(&payload)
+            .map_err(|e| ConnectionError::Protocol(format!("Encryption failed: {}", e)))?;
+        (encrypted, MessageFlags { encrypted: true, ..Default::default() })
+    } else {
+        (payload, MessageFlags::default())
+    };
+
+    if final_payload.len() > MAX_MESSAGE_SIZE {
+        return Err(ConnectionError::Message(MessageError::MessageTooLarge(final_payload.len())));
+    }
+
+    let mut buffer = Vec::with_capacity(8 + final_payload.len());
+    buffer.extend_from_slice(&MAGIC);
+    buffer.push(super::PROTOCOL_VERSION);
+    buffer.push(flags.to_byte());
+    buffer.extend_from_slice(&(final_payload.len() as u32).to_be_bytes());
+    buffer.extend_from_slice(&final_payload);
+
+    writer.write_all(&buffer).await?;
+    Ok(())
 }
 
 /// Connection errors

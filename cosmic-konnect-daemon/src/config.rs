@@ -11,8 +11,8 @@ use tracing::{debug, info};
 
 use crate::error::DaemonError;
 
-/// Default TCP port for CKP connections
-pub const DEFAULT_TCP_PORT: u16 = 51716;
+/// Default TCP port for CKP connections (matches Android Protocol.TCP_PORT)
+pub const DEFAULT_TCP_PORT: u16 = 17161;
 
 /// Current protocol version
 pub const PROTOCOL_VERSION: u8 = 1;

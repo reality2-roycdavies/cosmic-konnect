@@ -1,6 +1,6 @@
 # Cosmic Konnect
 
-A device connectivity application for the [COSMIC desktop environment](https://system76.com/cosmic), enabling seamless communication between your Linux desktop and Android devices.
+A device connectivity applet for the [COSMIC desktop environment](https://system76.com/cosmic), enabling seamless communication between your Linux desktop and Android devices. Runs as a native COSMIC panel applet with a background daemon.
 
 > **Early Alpha** - This project is in early alpha. Core functionality (discovery, pairing, clipboard sync) is being developed but many features are not yet working. Expect breaking changes and incomplete behaviour.
 
@@ -8,12 +8,12 @@ A device connectivity application for the [COSMIC desktop environment](https://s
 
 ## Features
 
+- **Panel Applet** - Native COSMIC panel applet showing device connectivity status
 - **Device Discovery** - Automatically discover devices on your local network
 - **Clipboard Sync** - Share clipboard content between desktop and phone
 - **Ping/Find Device** - Send pings between devices, ring your phone to find it
 - **Desktop Notifications** - Get notified when clipboard is received
-- **System Tray** - Runs quietly in your system tray with quick access to features
-- **Autostart** - Automatically starts on login
+- **Background Daemon** - Runs as a systemd user service for reliable connectivity
 
 ### Coming Soon
 
@@ -28,78 +28,90 @@ A device connectivity application for the [COSMIC desktop environment](https://s
 
 **Arch Linux / Manjaro:**
 ```bash
-sudo pacman -S rust gtk4 libadwaita openssl
+sudo pacman -S rust just gtk4 libadwaita openssl
 ```
 
 **Fedora:**
 ```bash
-sudo dnf install rust cargo gtk4-devel libadwaita-devel openssl-devel
+sudo dnf install rust cargo just gtk4-devel libadwaita-devel openssl-devel
 ```
 
 **Ubuntu / Debian:**
 ```bash
-sudo apt install rustc cargo libgtk-4-dev libadwaita-1-dev libssl-dev
+sudo apt install rustc cargo just libgtk-4-dev libadwaita-1-dev libssl-dev
 ```
 
-### Building from Source
+### Building & Installing
 
 ```bash
-# Clone the repository
 git clone https://github.com/reality2-roycdavies/cosmic-konnect.git
 cd cosmic-konnect
 
-# Build release version
-cargo build --release
+# Build both applet and daemon
+just build-release
 
-# The binary will be at target/release/cosmic-konnect
+# Install to ~/.local/ (binaries, icons, desktop entry, systemd service)
+just install-local
 ```
 
-### Installing
+### Starting the Daemon
 
 ```bash
-# Install to ~/.local/bin (make sure it's in your PATH)
-mkdir -p ~/.local/bin
-cp target/release/cosmic-konnect ~/.local/bin/
+# Start the background daemon
+systemctl --user start cosmic-konnect
 
-# Or install system-wide
-sudo cp target/release/cosmic-konnect /usr/local/bin/
+# Enable auto-start on login
+systemctl --user enable cosmic-konnect
 ```
+
+### Adding to Panel
+
+1. Open COSMIC Settings > Desktop > Panel
+2. Add the "Cosmic Konnect" applet to your panel
+3. Click the panel icon to see connected devices and actions
 
 ## Usage
 
-### System Tray Mode (Recommended)
+### Panel Applet (Default)
 
-Run with system tray icon - this is the recommended way to use the app:
+Run with no arguments to start as a COSMIC panel applet:
 
 ```bash
-cosmic-konnect --tray
+cosmic-konnect
 ```
 
-The app will:
-- Start in the system tray
-- Automatically discover devices on your network
-- Auto-connect to previously paired devices
-- Set up autostart for future logins
+The applet shows a connectivity icon in the panel. Click it to see:
+- Connection status
+- Discovered and connected devices
+- Per-device actions (Pair, Ring, Ping)
+- Quick access to Settings
 
 ### Other Modes
 
 ```bash
-# Open GUI (starts tray first if not running)
-cosmic-konnect
+# Open settings window directly
+cosmic-konnect --settings
 
-# Discover devices (CLI mode)
-cosmic-konnect --discover
-
-# List discovered devices and exit
+# List discovered devices via daemon (CLI)
 cosmic-konnect --list
 
-# Enable verbose logging
-cosmic-konnect --tray --verbose
+# Run local network discovery (CLI, 5 second scan)
+cosmic-konnect --discover
+
+# Show help
+cosmic-konnect --help
 ```
+
+### Settings
+
+Settings are accessible via:
+- The "Settings..." button in the applet popup
+- `cosmic-applet-settings konnect` (if the unified settings app is installed)
+- `cosmic-konnect --settings` (standalone window)
 
 ### Pairing with Android Device
 
-1. Start the desktop app: `cosmic-konnect --tray`
+1. Ensure the daemon is running: `systemctl --user start cosmic-konnect`
 2. Install and open the [Android companion app](https://github.com/reality2-roycdavies/cosmic-konnect-android)
 3. Both devices should discover each other automatically on the same network
 4. Tap the device in the Android app to connect
@@ -139,7 +151,8 @@ Make sure these ports are allowed through your firewall for devices to discover 
 
 1. Ensure both devices are on the same network
 2. Check firewall allows UDP 17160 and TCP 17161
-3. Try restarting the service (click refresh button or restart app)
+3. Check daemon is running: `systemctl --user status cosmic-konnect`
+4. Restart daemon: `systemctl --user restart cosmic-konnect`
 
 ### Connection drops frequently
 
@@ -150,7 +163,13 @@ Make sure these ports are allowed through your firewall for devices to discover 
 ### Verbose logging
 
 ```bash
-RUST_LOG=debug cosmic-konnect --tray --verbose
+RUST_LOG=debug cosmic-konnect-daemon
+```
+
+## Uninstalling
+
+```bash
+just uninstall-local
 ```
 
 ## Protocol
@@ -174,24 +193,27 @@ This project was developed as an educational resource demonstrating cross-platfo
   - Encryption and security implementation
   - Debugging techniques
 
-## Related COSMIC Projects
+## COSMIC Applet Suite
 
-| Project | Description |
-|---------|-------------|
-| **[cosmic-konnect-android](https://github.com/reality2-roycdavies/cosmic-konnect-android)** | Android companion app for Cosmic Konnect |
-
-### COSMIC Applet Suite
-
-A suite of custom COSMIC panel applets with a [unified settings app](https://github.com/reality2-roycdavies/cosmic-applet-settings):
+Part of a suite of custom COSMIC panel applets with a [unified settings app](https://github.com/reality2-roycdavies/cosmic-applet-settings):
 
 | Applet | Description |
 |--------|-------------|
 | **[cosmic-applet-settings](https://github.com/reality2-roycdavies/cosmic-applet-settings)** | Unified settings app for the applet suite |
+| **[cosmic-konnect](https://github.com/reality2-roycdavies/cosmic-konnect)** | Device connectivity (KDE Connect for COSMIC) |
 | **[cosmic-runkat](https://github.com/reality2-roycdavies/cosmic-runkat)** | Animated running cat CPU indicator for the panel |
 | **[cosmic-bing-wallpaper](https://github.com/reality2-roycdavies/cosmic-bing-wallpaper)** | Daily Bing wallpaper manager with auto-update |
 | **[cosmic-pie-menu](https://github.com/reality2-roycdavies/cosmic-pie-menu)** | Radial/pie menu app launcher with gesture support |
 | **[cosmic-tailscale](https://github.com/reality2-roycdavies/cosmic-tailscale)** | Tailscale VPN status and control applet |
 | **[cosmic-hotspot](https://github.com/reality2-roycdavies/cosmic-hotspot)** | WiFi hotspot toggle applet |
+
+## Related Projects
+
+| Project | Description |
+|---------|-------------|
+| **[cosmic-konnect-android](https://github.com/reality2-roycdavies/cosmic-konnect-android)** | Android companion app for Cosmic Konnect |
+| **[COSMIC Desktop](https://github.com/pop-os/cosmic-epoch)** | The COSMIC desktop environment |
+| **[KDE Connect](https://kdeconnect.kde.org/)** | Inspiration for this project |
 
 ## License
 
@@ -200,8 +222,3 @@ MIT License - see LICENSE file for details.
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues and pull requests.
-
-## Related Projects
-
-- [COSMIC Desktop](https://github.com/pop-os/cosmic-epoch) - The COSMIC desktop environment
-- [KDE Connect](https://kdeconnect.kde.org/) - Inspiration for this project

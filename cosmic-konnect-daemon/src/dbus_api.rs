@@ -7,10 +7,12 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use zbus::{connection, interface};
 
 use crate::AppState;
+use crate::protocol::connection::ConnectionManager;
+use crate::protocol::message::*;
 
 /// D-Bus service name
 pub const DBUS_NAME: &str = "io.github.reality2_roycdavies.CosmicKonnect";
@@ -21,23 +23,25 @@ pub const DBUS_PATH: &str = "/io/github/reality2_roycdavies/CosmicKonnect";
 /// D-Bus service wrapper
 pub struct DbusService {
     state: Arc<RwLock<AppState>>,
+    connection_manager: Arc<ConnectionManager>,
 }
 
 impl DbusService {
     /// Create a new D-Bus service
-    pub fn new(state: Arc<RwLock<AppState>>) -> Self {
-        Self { state }
+    pub fn new(state: Arc<RwLock<AppState>>, connection_manager: Arc<ConnectionManager>) -> Self {
+        Self { state, connection_manager }
     }
 
-    /// Run the D-Bus service
-    pub async fn run(&self) -> Result<(), crate::error::DaemonError> {
+    /// Start the D-Bus service and return the connection for signal emission
+    pub async fn start(&self) -> Result<zbus::Connection, crate::error::DaemonError> {
         info!("Starting D-Bus service: {}", DBUS_NAME);
 
         let api = CosmicKonnectApi {
             state: self.state.clone(),
+            connection_manager: self.connection_manager.clone(),
         };
 
-        let _connection = connection::Builder::session()?
+        let connection = connection::Builder::session()?
             .name(DBUS_NAME)?
             .serve_at(DBUS_PATH, api)?
             .build()
@@ -45,9 +49,84 @@ impl DbusService {
 
         info!("D-Bus service registered at {}", DBUS_PATH);
 
-        // Keep the connection alive
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+        Ok(connection)
+    }
+}
+
+/// Emit D-Bus signals from a connection. These are helper functions that
+/// can be called from outside the interface impl (e.g., the event handler).
+pub struct DbusSignals;
+
+impl DbusSignals {
+    pub async fn device_discovered(conn: &zbus::Connection, device_id: &str, name: &str, device_type: &str) {
+        if let Ok(iface_ref) = conn.object_server().interface::<_, CosmicKonnectApi>(DBUS_PATH).await {
+            let ctxt = iface_ref.signal_context();
+            if let Err(e) = CosmicKonnectApi::device_discovered(ctxt, device_id, name, device_type).await {
+                warn!("Failed to emit device_discovered signal: {}", e);
+            }
+        }
+    }
+
+    pub async fn device_connected(conn: &zbus::Connection, device_id: &str, name: &str) {
+        if let Ok(iface_ref) = conn.object_server().interface::<_, CosmicKonnectApi>(DBUS_PATH).await {
+            let ctxt = iface_ref.signal_context();
+            if let Err(e) = CosmicKonnectApi::device_connected(ctxt, device_id, name).await {
+                warn!("Failed to emit device_connected signal: {}", e);
+            }
+        }
+    }
+
+    pub async fn device_disconnected(conn: &zbus::Connection, device_id: &str) {
+        if let Ok(iface_ref) = conn.object_server().interface::<_, CosmicKonnectApi>(DBUS_PATH).await {
+            let ctxt = iface_ref.signal_context();
+            if let Err(e) = CosmicKonnectApi::device_disconnected(ctxt, device_id).await {
+                warn!("Failed to emit device_disconnected signal: {}", e);
+            }
+        }
+    }
+
+    pub async fn pairing_requested(conn: &zbus::Connection, device_id: &str, name: &str, code: &str) {
+        if let Ok(iface_ref) = conn.object_server().interface::<_, CosmicKonnectApi>(DBUS_PATH).await {
+            let ctxt = iface_ref.signal_context();
+            if let Err(e) = CosmicKonnectApi::pairing_requested(ctxt, device_id, name, code).await {
+                warn!("Failed to emit pairing_requested signal: {}", e);
+            }
+        }
+    }
+
+    pub async fn device_paired(conn: &zbus::Connection, device_id: &str, name: &str) {
+        if let Ok(iface_ref) = conn.object_server().interface::<_, CosmicKonnectApi>(DBUS_PATH).await {
+            let ctxt = iface_ref.signal_context();
+            if let Err(e) = CosmicKonnectApi::device_paired(ctxt, device_id, name).await {
+                warn!("Failed to emit device_paired signal: {}", e);
+            }
+        }
+    }
+
+    pub async fn clipboard_received(conn: &zbus::Connection, device_id: &str, content: &str) {
+        if let Ok(iface_ref) = conn.object_server().interface::<_, CosmicKonnectApi>(DBUS_PATH).await {
+            let ctxt = iface_ref.signal_context();
+            if let Err(e) = CosmicKonnectApi::clipboard_received(ctxt, device_id, content).await {
+                warn!("Failed to emit clipboard_received signal: {}", e);
+            }
+        }
+    }
+
+    pub async fn notification_received(conn: &zbus::Connection, device_id: &str, app_name: &str, title: &str, text: &str) {
+        if let Ok(iface_ref) = conn.object_server().interface::<_, CosmicKonnectApi>(DBUS_PATH).await {
+            let ctxt = iface_ref.signal_context();
+            if let Err(e) = CosmicKonnectApi::notification_received(ctxt, device_id, app_name, title, text).await {
+                warn!("Failed to emit notification_received signal: {}", e);
+            }
+        }
+    }
+
+    pub async fn file_offer_received(conn: &zbus::Connection, device_id: &str, transfer_id: &str, filename: &str, size: u64) {
+        if let Ok(iface_ref) = conn.object_server().interface::<_, CosmicKonnectApi>(DBUS_PATH).await {
+            let ctxt = iface_ref.signal_context();
+            if let Err(e) = CosmicKonnectApi::file_offer_received(ctxt, device_id, transfer_id, filename, size).await {
+                warn!("Failed to emit file_offer_received signal: {}", e);
+            }
         }
     }
 }
@@ -55,6 +134,7 @@ impl DbusService {
 /// The main D-Bus interface implementation
 struct CosmicKonnectApi {
     state: Arc<RwLock<AppState>>,
+    connection_manager: Arc<ConnectionManager>,
 }
 
 #[interface(name = "io.github.reality2_roycdavies.CosmicKonnect")]
@@ -119,91 +199,126 @@ impl CosmicKonnectApi {
     /// Connect to a device by ID
     async fn connect(&self, device_id: String) -> bool {
         debug!("D-Bus: Connect request for {}", device_id);
-        // TODO: Implement connection logic
+        let state = self.state.read().await;
+        if let Some(device) = state.device_manager.get_device(&device_id).await {
+            if let Some(addr) = device.addresses.first() {
+                let socket_addr = std::net::SocketAddr::new(*addr, device.tcp_port);
+                if let Err(e) = self.connection_manager.connect(socket_addr).await {
+                    warn!("Failed to connect to {}: {}", device_id, e);
+                    return false;
+                }
+                return true;
+            }
+        }
         false
     }
 
     /// Disconnect from a device
     async fn disconnect(&self, device_id: String) -> bool {
         debug!("D-Bus: Disconnect request for {}", device_id);
-        // TODO: Implement disconnection logic
-        false
+        self.connection_manager.disconnect(&device_id).await.is_ok()
     }
 
     /// Request pairing with a device
     async fn request_pairing(&self, device_id: String) -> bool {
         debug!("D-Bus: Pairing request for {}", device_id);
-        // TODO: Implement pairing request
-        false
+        self.connection_manager.request_pairing(&device_id).await.is_ok()
     }
 
     /// Accept a pending pairing request
     async fn accept_pairing(&self, device_id: String) -> bool {
         debug!("D-Bus: Accept pairing for {}", device_id);
-        // TODO: Implement accept pairing
-        false
+        self.connection_manager.accept_pairing(&device_id).await.is_ok()
     }
 
     /// Reject a pending pairing request
     async fn reject_pairing(&self, device_id: String) -> bool {
         debug!("D-Bus: Reject pairing for {}", device_id);
-        // TODO: Implement reject pairing
-        false
+        self.connection_manager.reject_pairing(&device_id).await.is_ok()
     }
 
     /// Unpair a device
     async fn unpair(&self, device_id: String) -> bool {
         debug!("D-Bus: Unpair request for {}", device_id);
-        // TODO: Implement unpairing
-        false
+        // Disconnect and remove pairing info
+        let _ = self.connection_manager.disconnect(&device_id).await;
+        true
     }
 
     /// Send clipboard content to a device
     async fn send_clipboard(&self, device_id: String, content: String) -> bool {
         debug!("D-Bus: Send clipboard to {} ({} bytes)", device_id, content.len());
-        // TODO: Implement clipboard send
-        false
+        let msg = Message::Clipboard(Clipboard {
+            msg_type: MessageType::Clipboard,
+            content,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
+        });
+        self.connection_manager.send_to(&device_id, msg).await.is_ok()
     }
 
     /// Broadcast clipboard to all connected devices
     async fn broadcast_clipboard(&self, content: String) -> u32 {
         debug!("D-Bus: Broadcast clipboard ({} bytes)", content.len());
-        // TODO: Implement clipboard broadcast
-        0
+        let msg = Message::Clipboard(Clipboard {
+            msg_type: MessageType::Clipboard,
+            content,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
+        });
+        let devices = self.connection_manager.connected_devices().await;
+        let count = devices.len() as u32;
+        let _ = self.connection_manager.broadcast(msg).await;
+        count
     }
 
     /// Send a ping to a device
     async fn ping(&self, device_id: String) -> bool {
         debug!("D-Bus: Ping {}", device_id);
-        // TODO: Implement ping
-        false
+        let msg = Message::Ping(Ping {
+            msg_type: MessageType::Ping,
+            message: None,
+        });
+        self.connection_manager.send_to(&device_id, msg).await.is_ok()
     }
 
     /// Ring/find a device
     async fn find_device(&self, device_id: String) -> bool {
         debug!("D-Bus: Find device {}", device_id);
-        // TODO: Implement find device
-        false
+        let msg = Message::FindDevice(FindDevice {
+            msg_type: MessageType::FindDevice,
+        });
+        self.connection_manager.send_to(&device_id, msg).await.is_ok()
     }
 
     /// Share a URL with a device
     async fn share_url(&self, device_id: String, url: String) -> bool {
         debug!("D-Bus: Share URL with {}: {}", device_id, url);
-        // TODO: Implement URL sharing
-        false
+        let msg = Message::ShareUrl(ShareUrl {
+            msg_type: MessageType::ShareUrl,
+            url,
+        });
+        self.connection_manager.send_to(&device_id, msg).await.is_ok()
     }
 
     /// Share text with a device
     async fn share_text(&self, device_id: String, text: String) -> bool {
         debug!("D-Bus: Share text with {} ({} bytes)", device_id, text.len());
-        // TODO: Implement text sharing
-        false
+        let msg = Message::ShareText(ShareText {
+            msg_type: MessageType::ShareText,
+            text,
+        });
+        self.connection_manager.send_to(&device_id, msg).await.is_ok()
     }
 
     /// Send a file to a device
     async fn send_file(&self, device_id: String, file_path: String) -> bool {
         debug!("D-Bus: Send file to {}: {}", device_id, file_path);
-        // TODO: Implement file send
+        // TODO: Implement file send (requires chunked transfer)
         false
     }
 

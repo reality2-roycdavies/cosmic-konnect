@@ -1,0 +1,13 @@
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Cosmic Konnect: phone with signal waves - default/symbolic state -->
+  <!-- Phone body -->
+  <rect x="5" y="1" width="6" height="11" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/>
+  <!-- Phone screen -->
+  <rect x="6.2" y="2.5" width="3.6" height="7" rx="0.4" fill="currentColor" opacity="0.2"/>
+  <!-- Home button -->
+  <circle cx="8" cy="10.5" r="0.6" fill="currentColor" opacity="0.5"/>
+  <!-- Signal wave 1 (small) -->
+  <path d="M12.5 5.5 C13.2 4.8 13.2 6.2 12.5 5.5" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.6"/>
+  <!-- Signal wave 2 (large) -->
+  <path d="M13.5 4 C15 5.5 15 7 13.5 8.5" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.35"/>
+</svg>

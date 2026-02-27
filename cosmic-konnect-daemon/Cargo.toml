@@ -29,7 +29,9 @@ rmp-serde = "1"
 # Crypto
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 rand = "0.8"
-blake3 = "1"
+hkdf = "0.12"
+sha2 = "0.10"
+aes-gcm = "0.10"
 
 # Logging
 tracing = "0.1"
@@ -43,6 +45,9 @@ dirs = "5"
 hostname = "0.3"
 hex = "0.4"
 tokio-stream = "0.1"
+
+# System integration
+notify-rust = "4"
 
 # mDNS/DNS-SD for LAN discovery
 mdns-sd = "0.11"

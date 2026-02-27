@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Cosmic Konnect
+Comment=Device connectivity applet for COSMIC desktop
+Exec=cosmic-konnect
+Icon=io.github.reality2_roycdavies.cosmic-konnect
+Terminal=false
+Type=Application
+Categories=Settings;Network;
+OnlyShowIn=COSMIC;
+NoDisplay=true
+X-CosmicApplet=true

@@ -412,6 +412,18 @@ impl DaemonClient {
         let proxy = self.proxy().await?;
         Ok(proxy.is_mdns_enabled().await?)
     }
+
+    /// Set BLE discovery enabled/disabled
+    pub async fn set_ble_enabled(&self, enabled: bool) -> Result<(), DaemonClientError> {
+        let proxy = self.proxy().await?;
+        Ok(proxy.set_ble_enabled(enabled).await?)
+    }
+
+    /// Set mDNS discovery enabled/disabled
+    pub async fn set_mdns_enabled(&self, enabled: bool) -> Result<(), DaemonClientError> {
+        let proxy = self.proxy().await?;
+        Ok(proxy.set_mdns_enabled(enabled).await?)
+    }
 }
 
 impl Default for DaemonClient {

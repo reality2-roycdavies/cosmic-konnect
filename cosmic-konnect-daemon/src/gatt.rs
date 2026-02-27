@@ -398,7 +398,7 @@ async fn run_gatt_server(
     let event_tx_w = event_tx.clone();
 
     // Build characteristics
-    let chars = vec![
+    let mut chars = vec![
         Characteristic {
             uuid: CHAR_DEVICE_ID,
             read: Some(CharacteristicRead {
@@ -482,8 +482,13 @@ async fn run_gatt_server(
                     Box::pin(async move {
                         if let Ok(json) = String::from_utf8(data) {
                             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
-                                let id = v["device_id"].as_str().unwrap_or("unknown").to_string();
-                                let name = v["device_name"].as_str().unwrap_or("Unknown").to_string();
+                                // Accept both camelCase (Android) and snake_case keys
+                                let id = v["deviceId"].as_str()
+                                    .or_else(|| v["device_id"].as_str())
+                                    .unwrap_or("unknown").to_string();
+                                let name = v["deviceName"].as_str()
+                                    .or_else(|| v["device_name"].as_str())
+                                    .unwrap_or("Unknown").to_string();
                                 let _ = tx.send(BleAdvertiserEvent::ConnectionRequested {
                                     requester_id: id,
                                     requester_name: name,
@@ -498,6 +503,40 @@ async fn run_gatt_server(
             ..Default::default()
         },
     ];
+
+    // Add hotspot SSID characteristic if available
+    if let Some(ref ssid) = identity.hotspot_ssid {
+        let ssid_val = ssid.clone();
+        chars.push(Characteristic {
+            uuid: CHAR_HOTSPOT_SSID,
+            read: Some(CharacteristicRead {
+                read: true,
+                fun: Box::new(move |_| {
+                    let v = ssid_val.clone();
+                    Box::pin(async move { Ok(v.as_bytes().to_vec()) })
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+    }
+
+    // Add hotspot password characteristic if available
+    if let Some(ref password) = identity.hotspot_password {
+        let password_val = password.clone();
+        chars.push(Characteristic {
+            uuid: CHAR_HOTSPOT_PASSWORD,
+            read: Some(CharacteristicRead {
+                read: true,
+                fun: Box::new(move |_| {
+                    let v = password_val.clone();
+                    Box::pin(async move { Ok(v.as_bytes().to_vec()) })
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+    }
 
     let service = Service {
         uuid: GATT_SERVICE_UUID,
