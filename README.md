@@ -2,6 +2,8 @@
 
 A device connectivity application for the [COSMIC desktop environment](https://system76.com/cosmic), enabling seamless communication between your Linux desktop and Android devices.
 
+> **Early Alpha** - This project is in early alpha. Core functionality (discovery, pairing, clipboard sync) is being developed but many features are not yet working. Expect breaking changes and incomplete behaviour.
+
 **Android companion app:** [cosmic-konnect-android](https://github.com/reality2-roycdavies/cosmic-konnect-android)
 
 ## Features
@@ -172,14 +174,19 @@ This project was developed as an educational resource demonstrating cross-platfo
   - Encryption and security implementation
   - Debugging techniques
 
-## Related COSMIC Applets
+## Related COSMIC Projects
 
-This is part of a suite of custom applets for the COSMIC desktop:
+| Project | Description |
+|---------|-------------|
+| **[cosmic-konnect-android](https://github.com/reality2-roycdavies/cosmic-konnect-android)** | Android companion app for Cosmic Konnect |
+
+### COSMIC Applet Suite
+
+A suite of custom COSMIC panel applets with a [unified settings app](https://github.com/reality2-roycdavies/cosmic-applet-settings):
 
 | Applet | Description |
 |--------|-------------|
-| **[cosmic-applet-settings](https://github.com/reality2-roycdavies/cosmic-applet-settings)** | Unified settings app for all custom COSMIC applets |
-| **[cosmic-konnect-android](https://github.com/reality2-roycdavies/cosmic-konnect-android)** | Android companion app for Cosmic Konnect |
+| **[cosmic-applet-settings](https://github.com/reality2-roycdavies/cosmic-applet-settings)** | Unified settings app for the applet suite |
 | **[cosmic-runkat](https://github.com/reality2-roycdavies/cosmic-runkat)** | Animated running cat CPU indicator for the panel |
 | **[cosmic-bing-wallpaper](https://github.com/reality2-roycdavies/cosmic-bing-wallpaper)** | Daily Bing wallpaper manager with auto-update |
 | **[cosmic-pie-menu](https://github.com/reality2-roycdavies/cosmic-pie-menu)** | Radial/pie menu app launcher with gesture support |
