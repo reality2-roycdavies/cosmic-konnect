@@ -433,8 +433,7 @@ pub fn start_tray() -> Result<(TrayHandle, std::sync::mpsc::Receiver<TrayCommand
             };
 
             // Spawn the tray service
-            let is_sandboxed = std::path::Path::new("/.flatpak-info").exists();
-            match BlockingTrayMethods::disable_dbus_name(tray, is_sandboxed).spawn() {
+            match BlockingTrayMethods::disable_dbus_name(tray, false).spawn() {
                 Ok(handle) => {
                     ksni_handle_opt = Some(handle);
                     break;

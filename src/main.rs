@@ -46,22 +46,11 @@ use tray::{TrayCommand, TrayDevice};
 use unified_discovery::{UnifiedDiscoveryConfig, UnifiedDiscoveryEvent, UnifiedDiscoveryManager};
 use zbus::connection::Builder as ConnectionBuilder;
 
-/// Check if running inside a Flatpak sandbox
-fn is_flatpak() -> bool {
-    std::path::Path::new("/.flatpak-info").exists()
-}
-
 /// Get the app config directory
 fn app_config_dir() -> std::path::PathBuf {
-    if is_flatpak() {
-        dirs::home_dir()
-            .map(|h| h.join(".config/cosmic-konnect"))
-            .unwrap_or_else(|| std::path::PathBuf::from("/tmp/cosmic-konnect"))
-    } else {
-        dirs::config_dir()
-            .map(|d| d.join("cosmic-konnect"))
-            .unwrap_or_else(|| std::path::PathBuf::from("/tmp/cosmic-konnect"))
-    }
+    dirs::config_dir()
+        .map(|d| d.join("cosmic-konnect"))
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp/cosmic-konnect"))
 }
 
 /// Get the path to the tray lockfile
@@ -296,13 +285,7 @@ fn stop_wifi_hotspot() {
 
 /// Ensure autostart entry exists for the tray
 fn ensure_autostart() {
-    let autostart_dir = if is_flatpak() {
-        dirs::home_dir().map(|h| h.join(".config/autostart"))
-    } else {
-        dirs::config_dir().map(|d| d.join("autostart"))
-    };
-
-    let Some(autostart_dir) = autostart_dir else {
+    let Some(autostart_dir) = dirs::config_dir().map(|d| d.join("autostart")) else {
         return;
     };
 
@@ -314,24 +297,16 @@ fn ensure_autostart() {
 
     let _ = fs::create_dir_all(&autostart_dir);
 
-    let exec_cmd = if is_flatpak() {
-        "flatpak run io.github.reality2_roycdavies.cosmic-konnect --tray"
-    } else {
-        "cosmic-konnect --tray"
-    };
-
-    let content = format!(
-        r#"[Desktop Entry]
+    let content = r#"[Desktop Entry]
 Type=Application
 Name=Cosmic Konnect
 Comment=KDE Connect for COSMIC desktop
-Exec={exec_cmd}
+Exec=cosmic-konnect --tray
 Icon=io.github.reality2_roycdavies.cosmic-konnect
 Terminal=false
 Categories=Utility;Network;
 X-GNOME-Autostart-enabled=true
-"#
-    );
+"#;
 
     let _ = fs::write(&desktop_file, content);
 }
