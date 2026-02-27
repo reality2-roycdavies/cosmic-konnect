@@ -172,10 +172,19 @@ This project was developed as an educational resource demonstrating cross-platfo
   - Encryption and security implementation
   - Debugging techniques
 
-This is part of a series of educational COSMIC desktop projects:
-- [cosmic-runkat](https://github.com/reality2-roycdavies/cosmic-runkat) - COSMIC applet development
-- [cosmic-bing-wallpaper](https://github.com/reality2-roycdavies/cosmic-bing-wallpaper) - Background service development
-- [cosmic-pie-menu](https://github.com/reality2-roycdavies/cosmic-pie-menu) - Custom UI development
+## Related COSMIC Applets
+
+This is part of a suite of custom applets for the COSMIC desktop:
+
+| Applet | Description |
+|--------|-------------|
+| **[cosmic-applet-settings](https://github.com/reality2-roycdavies/cosmic-applet-settings)** | Unified settings app for all custom COSMIC applets |
+| **[cosmic-konnect-android](https://github.com/reality2-roycdavies/cosmic-konnect-android)** | Android companion app for Cosmic Konnect |
+| **[cosmic-runkat](https://github.com/reality2-roycdavies/cosmic-runkat)** | Animated running cat CPU indicator for the panel |
+| **[cosmic-bing-wallpaper](https://github.com/reality2-roycdavies/cosmic-bing-wallpaper)** | Daily Bing wallpaper manager with auto-update |
+| **[cosmic-pie-menu](https://github.com/reality2-roycdavies/cosmic-pie-menu)** | Radial/pie menu app launcher with gesture support |
+| **[cosmic-tailscale](https://github.com/reality2-roycdavies/cosmic-tailscale)** | Tailscale VPN status and control applet |
+| **[cosmic-hotspot](https://github.com/reality2-roycdavies/cosmic-hotspot)** | WiFi hotspot toggle applet |
 
 ## License
 
@@ -187,6 +196,5 @@ Contributions are welcome! Please feel free to submit issues and pull requests.
 
 ## Related Projects
 
-- [cosmic-konnect-android](https://github.com/reality2-roycdavies/cosmic-konnect-android) - Android companion app
 - [COSMIC Desktop](https://github.com/pop-os/cosmic-epoch) - The COSMIC desktop environment
 - [KDE Connect](https://kdeconnect.kde.org/) - Inspiration for this project
