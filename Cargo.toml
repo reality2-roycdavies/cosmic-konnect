@@ -6,6 +6,9 @@ authors = ["Roy C. Davies"]
 license = "MIT"
 description = "KDE Connect protocol implementation for COSMIC desktop"
 repository = "https://github.com/reality2-roycdavies/cosmic-konnect"
+homepage = "https://github.com/reality2-roycdavies/cosmic-konnect"
+keywords = ["cosmic-desktop", "kdeconnect", "device-sync", "cosmic-applet", "linux"]
+categories = ["gui", "network-programming"]
 
 [dependencies]
 # COSMIC GUI toolkit (for settings/status window)
