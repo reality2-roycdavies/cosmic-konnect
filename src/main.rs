@@ -28,6 +28,7 @@ mod notifications;
 mod protocol;
 mod service;
 mod settings;
+mod settings_cli;   // CLI settings protocol (--settings-describe/set/action)
 mod settings_page;
 mod unified_discovery;  // WIP: Unified discovery manager
 mod wifidirect;  // WIP: Wi-Fi Direct support
@@ -48,6 +49,26 @@ fn main() -> cosmic::iced::Result {
             "--settings-standalone" => settings::run_settings(),
             "--list" | "-l" => {
                 run_cli_list();
+                Ok(())
+            }
+            "--settings-describe" => {
+                settings_cli::describe();
+                Ok(())
+            }
+            "--settings-set" => {
+                if args.len() < 4 {
+                    eprintln!("Usage: cosmic-konnect --settings-set <key> <json_value>");
+                    std::process::exit(1);
+                }
+                settings_cli::set(&args[2], &args[3]);
+                Ok(())
+            }
+            "--settings-action" => {
+                if args.len() < 3 {
+                    eprintln!("Usage: cosmic-konnect --settings-action <action_id>");
+                    std::process::exit(1);
+                }
+                settings_cli::action(&args[2]);
                 Ok(())
             }
             "--discover" | "-d" => {
