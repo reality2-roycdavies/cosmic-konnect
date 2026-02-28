@@ -22,6 +22,11 @@ A device connectivity applet for the [COSMIC desktop environment](https://system
 - File transfer
 - Notification mirroring
 
+## Screenshots
+
+![Cosmic Konnect settings in cosmic-applet-settings hub](screenshots/settings-inline.png)
+*Cosmic Konnect settings in the cosmic-applet-settings hub*
+
 ## Installation
 
 ### Dependencies
