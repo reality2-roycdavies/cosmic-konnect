@@ -6,7 +6,7 @@
 
 use cosmic::app::Core;
 use cosmic::iced::Length;
-use cosmic::widget::{self, button, container, column, row, settings, text, toggler};
+use cosmic::widget::{self, button, container, settings, text, toggler, Column, Row, Space};
 use cosmic::{Action, Application, Element, Task};
 
 use crate::daemon_client::{DaemonClient, DaemonDevice};
@@ -266,7 +266,7 @@ impl Application for CosmicKonnectApp {
                 let device_id_ring = device.device_id.clone();
                 let device_id_pair = device.device_id.clone();
 
-                let mut action_row = row().spacing(8).align_y(cosmic::iced::Alignment::Center);
+                let mut action_row = Row::new().spacing(8).align_y(cosmic::iced::Alignment::Center);
 
                 if !device.paired {
                     action_row = action_row.push(
@@ -280,16 +280,16 @@ impl Application for CosmicKonnectApp {
 
                 section = section.add(settings::flex_item(
                     &device.name,
-                    column()
+                    Column::new()
                         .spacing(4)
                         .push(
-                            row()
+                            Row::new()
                                 .spacing(12)
                                 .align_y(cosmic::iced::Alignment::Center)
                                 .push(widget::icon::from_name(device_icon).size(24))
                                 .push(state_badge)
                                 .push(paired_badge)
-                                .push(cosmic::widget::horizontal_space()),
+                                .push(Space::new().width(Length::Fill)),
                         )
                         .push(action_row),
                 ));
@@ -319,7 +319,7 @@ impl Application for CosmicKonnectApp {
 
         let status_section = settings::section().title("Status").add(settings::flex_item(
             "Daemon",
-            row()
+            Row::new()
                 .spacing(8)
                 .align_y(cosmic::iced::Alignment::Center)
                 .push(widget::icon::from_name(status_icon).size(16))

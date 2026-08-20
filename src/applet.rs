@@ -1,7 +1,7 @@
 use cosmic::app::{Core, Task};
 use cosmic::iced::window::Id;
 use cosmic::iced::{Length, Rectangle};
-use cosmic::iced_runtime::core::window;
+use cosmic::iced::window;
 use cosmic::surface::action::{app_popup, destroy_popup};
 use cosmic::widget::{self, text};
 use cosmic::Element;
@@ -234,11 +234,15 @@ impl cosmic::Application for KonnectApplet {
                     Message::Surface(destroy_popup(id))
                 } else {
                     Message::Surface(app_popup::<KonnectApplet>(
+                        |_| Default::default(),
                         move |state: &mut KonnectApplet| {
                             let new_id = Id::unique();
                             state.popup = Some(new_id);
 
-                            let popup_width = 320u32;
+                            // Width must be >= popup_container's fixed 360px autosize width,
+                            // else the buffer/surface size mismatch trips an xdg_surface
+                            // unconfigured_buffer protocol error and crashes the applet.
+                            let popup_width = 380u32;
                             let popup_height = 450u32;
 
                             let mut popup_settings = state.core.applet.get_popup_settings(
@@ -285,38 +289,40 @@ impl cosmic::Application for KonnectApplet {
         "".into()
     }
 
-    fn style(&self) -> Option<cosmic::iced_runtime::Appearance> {
+    fn style(&self) -> Option<cosmic::iced::theme::Style> {
         Some(cosmic::applet::style())
     }
 }
 
 impl KonnectApplet {
-    fn popup_content(&self) -> widget::Column<'_, Message> {
-        use cosmic::iced::widget::{column, container, horizontal_space, row, Space};
+    fn popup_content(&self) -> Element<'_, Message> {
+        use cosmic::widget::{container, Column, Row, Space};
         use cosmic::iced::{Alignment, Color};
 
         let divider = || {
-            container(Space::new(Length::Fill, Length::Fixed(1.0))).style(
-                |theme: &cosmic::Theme| {
+            container(Space::new().width(Length::Fill).height(Length::Fixed(1.0))).class(
+                cosmic::style::iced::Container::custom(|theme: &cosmic::Theme| {
                     let cosmic = theme.cosmic();
-                    container::Style {
+                    cosmic::iced::widget::container::Style {
                         background: Some(cosmic::iced::Background::Color(Color::from(
                             cosmic.palette.neutral_5,
                         ))),
                         ..Default::default()
                     }
-                },
+                }),
             )
         };
 
         // Title row
-        let title_row = row![text::body("Cosmic Konnect"), horizontal_space(),]
+        let title_row = Row::new()
+            .push(text::body("Cosmic Konnect"))
+            .push(Space::new().width(Length::Fill))
             .spacing(8)
             .align_y(Alignment::Center);
 
         // Status info
         let status_text = format!("Status: {}", self.status_message);
-        let info_col = column![text::body(status_text)].spacing(2);
+        let info_col = Column::new().push(text::body(status_text)).spacing(2);
 
         // Devices section
         let total_count = self.devices.len();
@@ -325,7 +331,7 @@ impl KonnectApplet {
             "Devices ({connected_count}/{total_count} online)"
         ));
 
-        let mut devices_col = column![devices_header].spacing(2);
+        let mut devices_col = Column::new().push(devices_header).spacing(2);
 
         if self.devices.is_empty() {
             devices_col = devices_col.push(text::caption("No devices discovered"));
@@ -336,27 +342,31 @@ impl KonnectApplet {
         }
 
         // Bottom actions row
-        let actions_row = row![
-            horizontal_space(),
-            widget::button::standard("Settings...")
-                .on_press(Message::OpenSettings),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
+        let actions_row = Row::new()
+            .push(Space::new().width(Length::Fill))
+            .push(
+                widget::button::standard("Settings...")
+                    .on_press(Message::OpenSettings),
+            )
+            .spacing(8)
+            .align_y(Alignment::Center);
 
         // Assemble
-        let mut content = column![title_row, divider(), info_col, divider(),]
+        Column::new()
+            .push(title_row)
+            .push(divider())
+            .push(info_col)
+            .push(divider())
+            .push(devices_col)
+            .push(divider())
+            .push(actions_row)
             .spacing(8)
-            .padding(12);
-
-        content = content.push(devices_col);
-        content = content.push(divider()).push(actions_row);
-
-        content
+            .padding(12)
+            .into()
     }
 
     fn device_row(&self, device: &DaemonDevice) -> Element<'_, Message> {
-        use cosmic::iced::widget::{column, horizontal_space, row};
+        use cosmic::widget::{Column, Row, Space};
         use cosmic::iced::Alignment;
 
         let status_indicator = match device.state.as_str() {
@@ -380,14 +390,17 @@ impl KonnectApplet {
             format!("  {} - Not paired", device.state)
         };
 
-        let mut device_col = column![text::caption(name_label), text::caption(state_label)].spacing(0);
+        let mut device_col = Column::new()
+            .push(text::caption(name_label))
+            .push(text::caption(state_label))
+            .spacing(0);
 
         // Action buttons
         let device_id = device.device_id.clone();
         let device_id_ring = device.device_id.clone();
         let device_id_pair = device.device_id.clone();
 
-        let mut buttons_row = row![].spacing(4).align_y(Alignment::Center);
+        let mut buttons_row = Row::new().spacing(4).align_y(Alignment::Center);
 
         if !device.paired {
             buttons_row = buttons_row.push(
@@ -399,7 +412,7 @@ impl KonnectApplet {
         buttons_row = buttons_row
             .push(widget::button::standard("Ring").on_press(Message::FindDevice(device_id_ring)))
             .push(widget::button::text("Ping").on_press(Message::PingDevice(device_id)))
-            .push(horizontal_space());
+            .push(Space::new().width(Length::Fill));
 
         device_col = device_col.push(buttons_row);
 
